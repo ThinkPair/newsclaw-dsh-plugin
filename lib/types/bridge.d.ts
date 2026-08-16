@@ -1,22 +1,19 @@
 /**
  * Agent-bridge invocation over HTTP. Every tool POSTs to the running
  * serve-api's `/api/agent-bridge` endpoint (the host-neutral agent-bridge/v2
- * JSON contract OpenClaw/Hermes/WorkBuddy share), which dispatches against a
- * warm in-process OpenClawAdapter — avoiding the per-call Python import cold
- * start of shelling out to the CLI. Parses the JSON reply, and turns
+ * JSON contract), which dispatches against a warm in-process adapter and
+ * avoids per-call process startup. Parses the JSON reply, and turns
  * `{"ok": false, ...}` payloads into thrown errors — the skill's working
  * rules: parse JSON, surface errors, stop.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { JsonValue } from '@deepseek-ai/dsh-session';
 /** Resolved plugin config (defaults applied in the plugin entry). */
 export interface BridgeConfig {
-    /** Base URL of the running OpenBiliClaw serve-api (default http://127.0.0.1:8420). */
+    /** Base URL of the running NewsClaw serve-api (default http://127.0.0.1:8430). */
     apiUrl: string;
-    /** OpenBiliClaw checkout directory (config.toml + data/ live here). */
-    workdir: string;
-    /** Absolute path of the adapter SKILL.md, or '' to skip registration. */
-    skillPath: string;
+    /** Adapter SKILL.md path or bundled file URL. */
+    skillPath: string | URL;
     /** Per-command budget in ms. */
     timeoutMs: number;
 }
@@ -38,12 +35,16 @@ export interface BridgeError {
     message?: string;
     [key: string]: unknown;
 }
+/** Redact credential-looking fragments before errors or Agent output. */
+export declare function redactText(value: string): string;
+/** Recursively remove credential values even if a backend forgets to mask them. */
+export declare function sanitizeBridgeValue(value: unknown): JsonValue;
 /** Parse the bridge's single JSON reply object. */
 export declare function parseBridgeLine(text: string): BridgeOk | BridgeError;
 /**
  * Build the bridge face over HTTP to the serve-api's `/api/agent-bridge`
- * endpoint.  The serve-api keeps a warm in-process OpenClawAdapter, so these
- * calls are fast (no Python subprocess per tool call).
+ * endpoint. The serve-api keeps a warm in-process adapter, so these calls do
+ * not launch a subprocess per tool invocation.
  * @param config - resolved plugin config.
  * @returns the bridge face.
  */

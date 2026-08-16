@@ -1,14 +1,14 @@
 /**
- * OpenBiliClaw REST client for the browser half. Talks to the user's local
+ * NewsClaw REST client for the browser half. Talks to the user's local
  * backend directly (CORS is permissive); the base URL is user-configurable
  * and persisted in localStorage. Only user-consumption endpoints are used —
  * nothing crawling/source-management related.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 /** localStorage key for the API base URL. */
-export declare const API_BASE_KEY = "openbiliclaw.apiBase";
+export declare const API_BASE_KEY = "newsclaw.apiBase";
 /** Default local backend address. */
-export declare const DEFAULT_API_BASE = "http://127.0.0.1:8420";
+export declare const DEFAULT_API_BASE = "http://127.0.0.1:8430";
 /** Read the persisted API base URL (falling back to the default). */
 export declare function readApiBase(): string;
 /** Persist the API base URL. */
@@ -16,49 +16,48 @@ export declare function writeApiBase(base: string): void;
 /** One recommendation card (RecommendationOut, defensive subset). */
 export interface RecommendationItem {
     id: number;
-    bvid: string;
+    article_id: string;
     item_key: string;
     title: string;
-    up_name: string;
+    publisher_name: string;
+    technical_provider: string;
     cover_url: string;
     expression: string;
+    why_for_you: string;
+    impact_chain: string[];
+    observation_points: string[];
     topic_label: string;
     content_id: string;
     content_url: string;
-    source_platform: string;
+    original_url: string;
+    media: string;
+    body_level: string;
     content_type: string;
     body_text: string;
     published_label: string;
     published_at: string;
     presented: boolean;
-    view_count: number;
-    like_count: number;
-    comment_count: number;
-    share_count: number;
-    danmaku_count: number;
-    favorite_count: number;
 }
-/** One proactive delight card (PendingDelightOut subset). */
-export interface DelightItem {
-    bvid: string;
+/** One proactive spotlight card (PendingSpotlightOut subset). */
+export interface SpotlightItem {
+    article_id: string;
     item_key: string;
     content_id: string;
     title: string;
-    delight_reason: string;
-    delight_score: number;
-    delight_hook: string;
+    spotlight_reason: string;
+    spotlight_score: number;
+    spotlight_hook: string;
     cover_url: string;
     content_url: string;
-    source_platform: string;
+    original_url: string;
+    media: string;
+    technical_provider: string;
+    body_level: string;
+    impact_chain: string[];
+    observation_points: string[];
     published_label: string;
     content_type: string;
     body_text: string;
-    view_count: number;
-    like_count: number;
-    comment_count: number;
-    share_count: number;
-    danmaku_count: number;
-    favorite_count: number;
     state?: string;
 }
 /** One probe hypothesis (interest or avoidance). */
@@ -73,7 +72,8 @@ export interface ProbeItem {
 /** One saved membership (SavedListItem subset). */
 export interface SavedItem {
     item_key: string;
-    source_platform: string;
+    article_id: string;
+    media: string;
     content_id: string;
     content_url: string;
     content_type: string;
@@ -82,32 +82,20 @@ export interface SavedItem {
     cover_url: string;
     note: string;
     added_at: string;
-    sync_status: string;
-    sync_task_id: string;
-    requested_action: string;
-    resolved_action: string;
-    resolved_target: string;
-    error_code: string;
-    error_message: string;
-}
-/** One per-item native-sync result inside a saved-sync task. */
-export interface SavedSyncItem {
-    item_key: string;
-    status: string;
-    resolved_action: string;
-    resolved_target: string;
-    error_code: string;
-    error_message: string;
-}
-/** Durable native-sync batch returned at creation and polling. */
-export interface SavedSyncBatch {
-    task_id: string;
-    items: SavedSyncItem[];
 }
 /** One page of saved memberships with the backend total count. */
 export interface SavedListPage {
     items: SavedItem[];
     total: number;
+}
+/** One news source's runtime state, independent from editable config. */
+export interface SourceAvailability {
+    id: string;
+    media: string;
+    technical_provider: string;
+    state: HealthState | 'unknown';
+    last_success_at: string;
+    error: string;
 }
 /** One chat turn. */
 export interface ChatTurn {
@@ -127,7 +115,7 @@ export interface ChatTurn {
 /** One 30-day content-history item. */
 export interface ContentHistoryItem {
     item_key: string;
-    source_platform: string;
+    media: string;
     content_id: string;
     content_url: string;
     content_type: string;
@@ -201,7 +189,7 @@ export interface ProfileSummary {
             weight: number;
         }>;
     }>;
-    favorite_up_users: string[];
+    favorite_sources: string[];
     life_stage: string;
     current_phase: string;
     cognitive_style: string[];
@@ -286,7 +274,7 @@ export declare class ApiError extends Error {
     readonly detail: unknown;
     constructor(path: string, status: number, detail: unknown);
 }
-/** One raw JSON request against the OpenBiliClaw backend. */
+/** One raw JSON request against the NewsClaw backend. */
 export declare function requestJson(base: string, path: string, options?: {
     method?: string;
     body?: unknown;
@@ -294,25 +282,39 @@ export declare function requestJson(base: string, path: string, options?: {
     timeoutMs?: number;
     signal?: AbortSignal;
 }): Promise<unknown>;
+/**
+ * Normalize one remote cover URL before it is handed to the image proxy.
+ * Some source adapters still emit protocol-relative or HTTP CDN URLs; HTTPS
+ * is required here because the DSH page itself is commonly served securely.
+ */
+export declare function normalizeImageUrl(value: unknown): string;
+/**
+ * Build the same backend image-proxy URL used by the browser and PC Web
+ * clients. Keeping the remote URL behind the local backend avoids hotlink,
+ * referrer and media-CDN CORS failures.
+ */
+export declare function imageProxyUrl(base: string, value: unknown): string;
+/** Mark cross-origin proxy images so the backend can apply its CORS policy. */
+export declare function imageProxyCrossOrigin(base: string): 'anonymous' | undefined;
 /** GET /api/recommendations — the current recommendation snapshot. */
 export declare function fetchRecommendations(base: string, signal?: AbortSignal): Promise<RecommendationItem[]>;
 /** POST /api/recommendations/reshuffle — replace the current page. */
 export declare function reshuffleRecommendations(base: string, opts?: {
-    sourcePlatform?: string;
-    excludedBvids?: string[];
+    media?: string;
+    excludedArticleIds?: string[];
 }, signal?: AbortSignal): Promise<RecommendationItem[]>;
 /** POST /api/recommendations/append — append another page. */
 export declare function appendRecommendations(base: string, opts?: {
-    sourcePlatform?: string;
-    excludedBvids?: string[];
+    media?: string;
+    excludedArticleIds?: string[];
 }, signal?: AbortSignal): Promise<RecommendationItem[]>;
 /** POST /api/recommendation-click — record a click-through (stable request_id). */
 export declare function reportClick(base: string, payload: {
     recommendation_id?: number;
     content_id?: string;
-    bvid?: string;
+    article_id?: string;
     content_url?: string;
-    source_platform?: string;
+    media?: string;
     title?: string;
     request_id: string;
 }, signal?: AbortSignal): Promise<void>;
@@ -329,12 +331,11 @@ export interface BehaviorEvent {
     url?: string;
     title?: string;
     timestamp: number;
-    source_platform?: string;
+    media?: string;
     context?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
     event_id: string;
-    watch_seconds?: number;
-    video_duration_seconds?: number;
+    reading_seconds?: number;
 }
 /** POST /api/events — ingest behavior events (e.g. saved-card feedback). */
 export declare function sendBehaviorEvents(base: string, events: BehaviorEvent[], signal?: AbortSignal): Promise<{
@@ -345,18 +346,20 @@ export declare function sendBehaviorEvents(base: string, events: BehaviorEvent[]
         reason: string;
     }>;
 }>;
-/** GET /api/delight/pending-batch — the full un-notified delight queue. */
-export declare function fetchDelightBatch(base: string, signal?: AbortSignal): Promise<DelightItem[]>;
+/** GET /api/spotlight/pending-batch — the full un-notified spotlight queue. */
+export declare function fetchSpotlightBatch(base: string, signal?: AbortSignal): Promise<SpotlightItem[]>;
 /** GET /api/notifications/pending — one notification-worthy recommendation. */
 export declare function fetchPendingNotification(base: string, signal?: AbortSignal): Promise<{
     recommendation_id: number;
-    bvid: string;
+    article_id: string;
     title: string;
     reason: string;
+    media: string;
+    original_url: string;
 } | null>;
-/** POST /api/delight/respond — view/like/dislike/dismiss/chat (stable request_id). */
-export declare function respondToDelight(base: string, payload: {
-    bvid: string;
+/** POST /api/spotlight/respond — view/like/dislike/dismiss/chat (stable request_id). */
+export declare function respondToSpotlight(base: string, payload: {
+    article_id: string;
     response: string;
     title?: string;
     message?: string;
@@ -364,18 +367,20 @@ export declare function respondToDelight(base: string, payload: {
 }, signal?: AbortSignal): Promise<unknown>;
 /** GET /api/interest-probes/pending — active speculative interests. */
 export declare function fetchInterestProbes(base: string, signal?: AbortSignal): Promise<ProbeItem[]>;
-/** POST /api/interest-probes/respond — confirm/reject/defer/chat. */
+/** POST /api/interest-probes/respond — confirm/reject/defer/chat, idempotent. */
 export declare function respondInterestProbe(base: string, payload: {
     domain: string;
     response: string;
+    request_id: string;
     message?: string;
 }, signal?: AbortSignal): Promise<unknown>;
 /** GET /api/avoidance-probes/pending — active speculative avoidances. */
 export declare function fetchAvoidanceProbes(base: string, signal?: AbortSignal): Promise<ProbeItem[]>;
-/** POST /api/avoidance-probes/respond — confirm/reject/defer/chat. */
+/** POST /api/avoidance-probes/respond — confirm/reject/defer/chat, idempotent. */
 export declare function respondAvoidanceProbe(base: string, payload: {
     domain: string;
     response: string;
+    request_id: string;
     message?: string;
 }, signal?: AbortSignal): Promise<unknown>;
 /** POST /api/chat — one Socratic dialogue exchange (returns { reply }). */
@@ -410,17 +415,11 @@ export declare function fetchContentHistory(base: string, category: 'clicked' | 
 export declare function fetchSavedStatus(base: string, listKind: 'favorite' | 'watch_later', itemKey: string, signal?: AbortSignal): Promise<boolean>;
 /** GET /api/saved/{listKind} — favorite or watch_later memberships plus total. */
 export declare function fetchSaved(base: string, listKind: 'favorite' | 'watch_later', signal?: AbortSignal): Promise<SavedListPage>;
-/** POST /api/saved/{listKind}/sync — explicit full/batch native sync.
- *  An empty item_keys array means all eligible rows for this list. */
-export declare function syncSavedItems(base: string, listKind: 'favorite' | 'watch_later', itemKeys?: string[], signal?: AbortSignal): Promise<SavedSyncBatch>;
-/** GET /api/saved-sync/tasks/{task_id} — poll one durable native-sync batch. */
-export declare function pollSavedSyncTask(base: string, taskId: string, signal?: AbortSignal): Promise<SavedSyncBatch>;
 /** POST /api/saved/{listKind} — add one membership. */
 export declare function saveItem(base: string, listKind: 'favorite' | 'watch_later', payload: {
-    source_platform: string;
-    content_id: string;
-    content_url?: string;
-    content_type?: string;
+    article_id: string;
+    media?: string;
+    original_url?: string;
     title?: string;
     author_name?: string;
     cover_url?: string;
@@ -434,8 +433,12 @@ export declare function fetchConfig(base: string, signal?: AbortSignal): Promise
 export declare function updateConfig(base: string, partial: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 /** GET /api/runtime-status — backend readiness and counts. */
 export declare function fetchRuntimeStatus(base: string, signal?: AbortSignal): Promise<RuntimeStatus | null>;
-/** GET /api/health — reachability probe. */
-export declare function fetchHealth(base: string, signal?: AbortSignal): Promise<boolean>;
+/** Three-state backend status shared by the DSH, Web and mobile clients. */
+export type HealthState = 'online' | 'degraded' | 'offline';
+/** GET /api/health — reachability plus partial-source degradation. */
+export declare function fetchHealthState(base: string, signal?: AbortSignal): Promise<HealthState>;
+/** Read source health through the same versioned Agent Bridge as DSH tools. */
+export declare function fetchSourceAvailability(base: string, signal?: AbortSignal): Promise<SourceAvailability[]>;
 /** GET /api/profile-summary — the AI profile summary (canonical surface shape). */
 export declare function fetchProfileSummary(base: string, opts?: {
     limit?: number;
@@ -455,63 +458,11 @@ export declare function fetchActivityFeed(base: string, opts?: {
 }>;
 /** Generate one stable idempotency key for a UI action (uuid v4). */
 export declare function stableId(): string;
-/** Result of one no-write connectivity probe (`POST /api/config/probe-service`). */
-export interface ProbeResult {
-    ok: boolean;
-    provider: string;
-    model: string;
-    message: string;
-    error: string;
-    latencyMs: number;
-}
-/** One v2 LLM instance row as exchanged with `/api/config`. */
-export interface LlmInstance {
-    name: string;
-    provider_type: string;
-    enabled: boolean;
-    api_key: string;
-    model: string;
-    base_url: string;
-    auth_mode: string;
-    api_flavor: string;
-    http_referer: string;
-    x_title: string;
-    reasoning_effort: string;
-    num_ctx: number;
-}
-/** `/api/config/discover-models` response. */
-export interface ModelDiscoveryResult {
-    ok: boolean;
-    models: string[];
-    reasoningEfforts: string[];
-    error: string;
-}
 /** `/api/init-status` response (defensive). */
 export interface InitStatus {
     initialized: boolean;
     running: boolean;
 }
-/** `/api/update-status` response (defensive). */
-export interface UpdateStatus {
-    current_version: string;
-    latest_version: string;
-    latest_tag: string;
-    state: string;
-    reason: string;
-    last_check_at: string;
-    error: string;
-    install_mode: string;
-}
-/** Probe submitted LLM/embedding/proxy settings without saving config.toml. */
-export declare function probeConfigService(base: string, kind: 'llm' | 'llm_instance' | 'llm_chain' | 'embedding' | 'network_proxy', config: Record<string, unknown>, instanceId?: string, signal?: AbortSignal): Promise<ProbeResult>;
-/** List models for one submitted instance without saving config.toml. */
-export declare function discoverConfigModels(base: string, instanceId: string, config: Record<string, unknown>, signal?: AbortSignal): Promise<ModelDiscoveryResult>;
-/** Read the LAN password-gate status. */
-export declare function fetchAuthStatus(base: string, signal?: AbortSignal): Promise<{
-    enabled: boolean;
-}>;
-/** Enable/disable the LAN password gate (local-only admin surface). */
-export declare function setLanAuth(base: string, enabled: boolean, password: string, signal?: AbortSignal): Promise<boolean>;
 /** Read boot-autostart state. */
 export declare function fetchAutostartStatus(base: string, signal?: AbortSignal): Promise<{
     enabled: boolean;
@@ -525,14 +476,4 @@ export declare function startInit(base: string, payload: {
     force?: boolean;
     reset_cognition?: boolean;
 }, signal?: AbortSignal): Promise<void>;
-/** Read backend update status. */
-export declare function fetchUpdateStatus(base: string, signal?: AbortSignal): Promise<UpdateStatus>;
-/** Trigger an immediate backend update check. */
-export declare function checkBackendUpdate(base: string, signal?: AbortSignal): Promise<unknown>;
-/** Start applying a backend update (backend restarts afterwards). */
-export declare function applyBackendUpdate(base: string, tag: string, signal?: AbortSignal): Promise<unknown>;
-/** GET /api/project-stats — the project summary used by the GitHub star prompt. */
-export declare function fetchProjectStats(base: string, signal?: AbortSignal): Promise<{
-    githubStars: number;
-}>;
 //# sourceMappingURL=api.d.ts.map

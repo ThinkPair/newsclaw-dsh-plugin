@@ -1,10 +1,10 @@
 /**
- * Registers the repository's canonical openbiliclaw-adapter skill into the
+ * Registers the repository's canonical newsclaw-adapter skill into the
  * DSH skill registry, so the model can load it through the `skill` tool and
- * operate OpenBiliClaw in a closed loop (the same SKILL.md OpenClaw/Hermes
- * consume). The file is read at plugin activation from the checkout path;
+ * operate NewsClaw in a closed loop. The file is read at plugin activation
+ * from the bundled package path or an explicit development override;
  * when unreadable the plugin logs a warning and continues without it.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { SkillRegistration } from '@deepseek-ai/dsh-skill'
 
@@ -49,14 +49,14 @@ export function parseSkillFrontmatter(raw: string): { meta: Frontmatter; body: s
 export function loadAdapterSkill(raw: string, skillPath: string): SkillRegistration {
   const { meta, body } = parseSkillFrontmatter(raw)
   return {
-    name: meta.name ?? 'openbiliclaw_adapter',
+    name: meta.name ?? 'newsclaw_adapter',
     description: meta.description
-      ?? 'Use OpenBiliClaw\'s versioned Agent Bridge to read multi-source recommendations, profile state, dialogue, probes, saved lists, and submit explicit feedback.',
+      ?? 'Use NewsClaw\'s versioned Agent Bridge to read multi-source recommendations, profile state, dialogue, probes, saved lists, and submit explicit feedback.',
     content: body.trim(),
     path: skillPath,
     source: 'runtime',
     invocation: { modelInvocable: true, userInvocable: true },
-    provider: 'openbiliclaw',
+    provider: 'newsclaw',
     ...(meta.whenToUse !== undefined && meta.whenToUse !== '' ? { whenToUse: meta.whenToUse } : {}),
   }
 }

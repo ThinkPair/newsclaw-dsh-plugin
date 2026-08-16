@@ -1,11 +1,11 @@
 /**
- * OpenBiliClaw sidebar panel shell: brand header with the message bell
+ * NewsClaw sidebar panel shell: brand header with the message bell
  * (badge + 消息 drawer), tab bar with SVG icons, and the active view. Live
- * runtime-stream events feed the probe/delight notifications and tab badges.
- * @module @openbiliclaw/dsh-plugin
+ * runtime-stream events feed the probe/spotlight notifications and tab badges.
+ * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchHealth, fetchProjectStats, readApiBase } from './api.ts'
+import { fetchHealthState, readApiBase, type HealthState } from './api.ts'
 import { BRAND_ICON } from './brandIcon.ts'
 import { LiveClient, type LiveEvent } from './live.ts'
 import { ActivityFooter, RecommendView } from './views.tsx'
@@ -14,14 +14,14 @@ import { ChatView } from './dialogue.tsx'
 import { ProfileView } from './profile.tsx'
 import {
   hydrateDrawer, MessagesDrawer, probeKey,
-  type DelightNotice, type ProbeNotice, type RecommendationNotice,
+  type SpotlightNotice, type ProbeNotice, type RecommendationNotice,
 } from './notifications.tsx'
-import { MessageIcon, ChatIcon, CollapseIcon, GearIcon, GithubStarIcon, LibraryIcon, MonitorIcon, ProfileIcon, SparkleIcon } from './icons.tsx'
+import { MessageIcon, ChatIcon, CollapseIcon, GearIcon, LibraryIcon, MonitorIcon, ProfileIcon, SparkleIcon } from './icons.tsx'
 import { SettingsOverlay } from './settings.tsx'
 import css from './panel.module.css'
 
 /** Business face passed to the panel by the DOM mount. */
-export interface OpenBiliClawInjected {
+export interface NewsClawInjected {
   /** Close the panel column (driven by the panel's collapse button). */
   closePanel: () => void
   /** Whether the shell theme is currently dark. */
@@ -31,76 +31,39 @@ export interface OpenBiliClawInjected {
 }
 
 /** Panel props: the business face passed by the DOM mount (close + theme). */
-export type OpenBiliClawPanelProps = OpenBiliClawInjected
+export type NewsClawPanelProps = NewsClawInjected
 
 type TabKey = 'recommend' | 'library' | 'chat' | 'profile'
-
-/** The project's GitHub repo (GitHub star prompt, mirroring the popup). */
-const STAR_REPO_URL = 'https://github.com/whiteguo233/OpenBiliClaw'
-const STAR_COUNT_CACHE_KEY = 'obc:starCount'
-const STAR_COUNT_TTL_MS = 12 * 60 * 60 * 1000
-
-/** Compact star count (the popup's `_formatStarCount`). */
-function formatStarCount(n: number): string {
-  if (!Number.isFinite(n)) return ''
-  if (n >= 10000) return `${Math.round(n / 1000)}k`
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  return String(Math.round(n))
-}
 
 /** Canonical tab structure (same IA as the mobile web + extension popup). */
 const TABS: Array<{ key: TabKey; label: string; icon: (props: { size?: number }) => React.JSX.Element }> = [
   { key: 'recommend', label: '推荐', icon: SparkleIcon },
   { key: 'library', label: '内容库', icon: LibraryIcon },
-  { key: 'chat', label: '对话', icon: ChatIcon },
   { key: 'profile', label: '画像', icon: ProfileIcon },
+  { key: 'chat', label: '对话', icon: ChatIcon },
 ]
 
 /**
- * The panel column body: OpenBiliClaw user-consumption panel.
+ * The panel column body: NewsClaw user-consumption panel.
  * @param props - injected actions (close + theme).
  */
-export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBiliClawPanelProps): React.JSX.Element {
+export function NewsClawPanel({ closePanel, isDark, onThemeChange }: NewsClawPanelProps): React.JSX.Element {
   const [dark, setDark] = useState(() => isDark())
   useEffect(() => onThemeChange(setDark), [onThemeChange])
   const [base, setBase] = useState(() => readApiBase())
-  const [online, setOnline] = useState(false)
+  const [connection, setConnection] = useState<HealthState>('offline')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const [tab, setTab] = useState<TabKey>('recommend')
   const [badges, setBadges] = useState<Partial<Record<TabKey, number>>>({})
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [probes, setProbes] = useState<ProbeNotice[]>([])
-  const [delights, setDelights] = useState<DelightNotice[]>([])
+  const [spotlights, setSpotlights] = useState<SpotlightNotice[]>([])
   const [notifications, setNotifications] = useState<RecommendationNotice[]>([])
   const [drawerError, setDrawerError] = useState('')
-  const [starCount, setStarCount] = useState('')
   const handledProbes = useRef<Set<string>>(new Set())
   const probeRef = useRef<ProbeNotice[]>([])
   probeRef.current = probes
-
-  // GitHub star prompt: fetch the count through the backend (ETag/rate-limit
-  // handled server-side) with a 12h localStorage cache, like the popup.
-  useEffect(() => {
-    let cachedTime = 0
-    try {
-      const raw = localStorage.getItem(STAR_COUNT_CACHE_KEY)
-      if (raw !== null) {
-        const parsed = JSON.parse(raw) as { n?: unknown; t?: unknown }
-        const n = Number(parsed.n)
-        if (Number.isFinite(n) && n > 0) setStarCount(formatStarCount(n))
-        cachedTime = typeof parsed.t === 'number' ? parsed.t : 0
-      }
-    } catch { /* ignore unreadable cache */ }
-    if (Date.now() - cachedTime < STAR_COUNT_TTL_MS) return
-    let cancelled = false
-    void fetchProjectStats(base).then(({ githubStars }) => {
-      if (cancelled || githubStars <= 0) return
-      setStarCount(formatStarCount(githubStars))
-      try { localStorage.setItem(STAR_COUNT_CACHE_KEY, JSON.stringify({ n: githubStars, t: Date.now() })) } catch { /* ignore */ }
-    })
-    return () => { cancelled = true }
-  }, [base])
 
   // Connection probe: HTTP health is the single source of truth for the
   // status dot (the WebSocket alone flaps in background tabs and must not
@@ -110,13 +73,13 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
   const healthProbeRef = useRef<(() => void) | null>(null)
   const failStreakRef = useRef(0)
   const probeNow = useCallback(() => {
-    void fetchHealth(base).then(ok => {
-      if (ok) {
+    void fetchHealthState(base).then(state => {
+      if (state !== 'offline') {
         failStreakRef.current = 0
-        setOnline(true)
+        setConnection(state)
       } else {
         failStreakRef.current += 1
-        if (failStreakRef.current >= 2) setOnline(false)
+        if (failStreakRef.current >= 2) setConnection('offline')
       }
     })
   }, [base])
@@ -133,13 +96,13 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
     void hydrateDrawer(base, handledProbes.current).then(result => {
       if (cancelled) return
       setProbes(result.probes)
-      setDelights(result.delights)
+      setSpotlights(result.spotlights)
       setNotifications(result.notifications)
     })
     return () => { cancelled = true }
   }, [base])
 
-  // Live stream: probe/delight notifications + tab badges.
+  // Live stream: probe/spotlight notifications + tab badges.
   const [liveTick, setLiveTick] = useState(0)
   useEffect(() => {
     const client = new LiveClient(base)
@@ -164,18 +127,20 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
         })
         setBadges(prev => ({ ...prev, profile: (prev.profile ?? 0) + 1 }))
         setLiveTick(tick => tick + 1)
-      } else if (event.type === 'delight.candidate') {
-        const bvid = typeof payload.bvid === 'string' ? payload.bvid : ''
-        if (bvid === '') return
-        setDelights(prev => prev.some(d => d.bvid === bvid) ? prev : [...prev, {
-          bvid,
+      } else if (event.type === 'spotlight.candidate') {
+        const article_id = typeof payload.article_id === 'string' ? payload.article_id : ''
+        if (article_id === '') return
+        setSpotlights(prev => prev.some(d => d.article_id === article_id) ? prev : [...prev, {
+          article_id,
           title: typeof payload.title === 'string' ? payload.title : '',
-          reason: typeof payload.delight_reason === 'string' ? payload.delight_reason : '',
-          hook: typeof payload.delight_hook === 'string' ? payload.delight_hook : '',
-          source_platform: typeof payload.source_platform === 'string' ? payload.source_platform : 'bilibili',
-          content_url: typeof payload.content_url === 'string' ? payload.content_url : '',
-          content_id: typeof payload.content_id === 'string' ? payload.content_id : bvid,
-          score: typeof payload.delight_score === 'number' ? payload.delight_score : 0,
+          reason: typeof payload.spotlight_reason === 'string' ? payload.spotlight_reason : '',
+          hook: typeof payload.spotlight_hook === 'string' ? payload.spotlight_hook : '',
+          media: typeof payload.media === 'string' ? payload.media : '未知媒体',
+          content_url: typeof payload.original_url === 'string'
+            ? payload.original_url
+            : typeof payload.content_url === 'string' ? payload.content_url : '',
+          content_id: typeof payload.content_id === 'string' ? payload.content_id : article_id,
+          score: typeof payload.spotlight_score === 'number' ? payload.spotlight_score : 0,
         }])
         setBadges(prev => ({ ...prev, recommend: (prev.recommend ?? 0) + 1 }))
         setLiveTick(tick => tick + 1)
@@ -187,9 +152,9 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
           handledProbes.current.add(key)
           setProbes(prev => prev.filter(p => p.key !== key))
         }
-      } else if (event.type === 'delight.liked' || event.type === 'delight.disliked' || event.type === 'delight.refreshed') {
-        const bvid = typeof payload.bvid === 'string' ? payload.bvid : ''
-        if (bvid !== '') setDelights(prev => prev.filter(d => d.bvid !== bvid))
+      } else if (event.type === 'spotlight.liked' || event.type === 'spotlight.disliked' || event.type === 'spotlight.refreshed') {
+        const article_id = typeof payload.article_id === 'string' ? payload.article_id : ''
+        if (article_id !== '') setSpotlights(prev => prev.filter(d => d.article_id !== article_id))
       }
     })
     const offStatus = client.onStatusChange(() => { healthProbeRef.current?.() })
@@ -212,7 +177,7 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
     setDrawerError('')
     void hydrateDrawer(base, handledProbes.current).then(result => {
       setProbes(prev => mergeProbes(prev, result.probes))
-      setDelights(result.delights)
+      setSpotlights(result.spotlights)
       setNotifications(result.notifications)
     }).catch(() => undefined)
   }, [base])
@@ -222,15 +187,15 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
     setProbes(prev => prev.filter(p => p.key !== key))
   }, [])
 
-  const onDelightHandled = useCallback((bvid: string) => {
-    setDelights(prev => prev.filter(d => d.bvid !== bvid))
+  const onSpotlightHandled = useCallback((article_id: string) => {
+    setSpotlights(prev => prev.filter(d => d.article_id !== article_id))
   }, [])
 
-  const onNotificationHandled = useCallback((bvid: string) => {
-    setNotifications(prev => prev.filter(n => n.bvid !== bvid))
+  const onNotificationHandled = useCallback((article_id: string) => {
+    setNotifications(prev => prev.filter(n => n.article_id !== article_id))
   }, [])
 
-  const messageCount = probes.length + delights.length + notifications.length
+  const messageCount = probes.length + spotlights.length + notifications.length
 
   return (
     <div className={css.panel} data-dark={dark}>
@@ -238,20 +203,15 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
         <div className={css.brand}>
           <img className={css.brandMark} src={BRAND_ICON} alt="" aria-hidden="true" />
           <span className={css.brandCopy}>
-            <span className={css.brandTitle}>OpenBiliClaw</span>
-            <span className={css.status} title={online ? '后端在线' : '后端离线'}>
-              <span className={css.statusDot} data-online={online} />
-              <span className={css.statusText}>{online ? '后端在线' : '后端离线'}</span>
+            <span className={css.brandTitle}>NewsClaw</span>
+            <span className={css.status} title={connection === 'online' ? '在线' : connection === 'degraded' ? '降级运行' : '离线'}>
+              <span className={css.statusDot} data-state={connection} />
+              <span className={css.statusText}>{connection === 'online' ? '在线' : connection === 'degraded' ? '降级' : '离线'}</span>
             </span>
           </span>
         </div>
-        <button type="button" className={css.iconButton} title="电脑版：在浏览器中打开 Web 版" onClick={() => { window.open(`${base}/`, '_blank', 'noopener') }}>
+        <button type="button" className={css.iconButton} title="电脑版：在浏览器中打开 Web 版" onClick={() => { window.open(`${base}/web`, '_blank', 'noopener') }}>
           <MonitorIcon size={15} />
-        </button>
-        <button type="button" className={css.starButton} title="在 GitHub 给 OpenBiliClaw 点个 Star" onClick={() => { window.open(STAR_REPO_URL, '_blank', 'noopener') }}>
-          <GithubStarIcon size={14} />
-          <span className={css.starLabel}>Star</span>
-          {starCount !== '' ? <span className={css.starCount}>{starCount}</span> : null}
         </button>
         <button type="button" className={css.iconButton} title="消息" onClick={openDrawer}>
           <MessageIcon size={15} />
@@ -298,11 +258,11 @@ export function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBil
         <MessagesDrawer
           base={base}
           probes={probes}
-          delights={delights}
+          spotlights={spotlights}
           notifications={notifications}
           onClose={() => setDrawerOpen(false)}
           onProbeHandled={onProbeHandled}
-          onDelightHandled={onDelightHandled}
+          onSpotlightHandled={onSpotlightHandled}
           onNotificationHandled={onNotificationHandled}
           onError={setDrawerError}
         />

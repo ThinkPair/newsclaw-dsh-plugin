@@ -1,17 +1,17 @@
 /**
  * 消息 drawer — the same message system as the mobile web's messages overlay:
  * probe notifications (interest / avoidance / challenge) with the four-state
- * actions, delight surprise messages, and pending notification
- * recommendations. Badge = probe + delight + notification count.
- * @module @openbiliclaw/dsh-plugin
+ * actions, spotlight surprise messages, and pending notification
+ * recommendations. Badge = probe + spotlight + notification count.
+ * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  fetchAvoidanceProbes, fetchDelightBatch, fetchInterestProbes, fetchPendingNotification,
-  respondAvoidanceProbe, respondInterestProbe, respondToDelight,
-  stableId, type DelightItem, type ProbeItem,
+  fetchAvoidanceProbes, fetchSpotlightBatch, fetchInterestProbes, fetchPendingNotification,
+  respondAvoidanceProbe, respondInterestProbe, respondToSpotlight,
+  stableId, type SpotlightItem, type ProbeItem,
 } from './api.ts'
-import { ActionButton, openItem, platformLabel } from './views.tsx'
+import { ActionButton, openItem } from './views.tsx'
 import { MessageIcon, CloseIcon, SearchIcon } from './icons.tsx'
 import css from './panel.module.css'
 
@@ -25,13 +25,13 @@ export interface ProbeNotice {
   confidence: number
 }
 
-/** One delight message row. */
-export interface DelightNotice {
-  bvid: string
+/** One spotlight message row. */
+export interface SpotlightNotice {
+  article_id: string
   title: string
   reason: string
   hook: string
-  source_platform: string
+  media: string
   content_url: string
   content_id: string
   score: number
@@ -39,9 +39,11 @@ export interface DelightNotice {
 
 /** One pending notification (a recommendation the system wants to surface). */
 export interface RecommendationNotice {
-  bvid: string
+  article_id: string
   title: string
   reason: string
+  media: string
+  original_url: string
 }
 
 /** Canonical probe action sets (same labels as the mobile web). */
@@ -72,6 +74,7 @@ function ProbeMessage(props: {
 }): React.JSX.Element {
   const { base, notice, onHandled, onError } = props
   const [busy, setBusy] = useState('')
+  const [requestIds] = useState(() => ({ confirm: stableId(), reject: stableId(), defer: stableId(), chat: stableId() }))
   const isAvoidance = notice.type === 'avoidance.probe'
   const tone = isAvoidance ? 'avoidance' : notice.challenge ? 'challenge' : 'interest'
   const actions = isAvoidance ? AVOIDANCE_ACTIONS : INTEREST_ACTIONS
@@ -84,15 +87,16 @@ function ProbeMessage(props: {
   const answer = useCallback(async (action: string) => {
     setBusy(action)
     try {
-      if (isAvoidance) await respondAvoidanceProbe(base, { domain: notice.domain, response: action })
-      else await respondInterestProbe(base, { domain: notice.domain, response: action })
+      const request_id = requestIds[action as keyof typeof requestIds] ?? stableId()
+      if (isAvoidance) await respondAvoidanceProbe(base, { domain: notice.domain, response: action, request_id })
+      else await respondInterestProbe(base, { domain: notice.domain, response: action, request_id })
       onHandled(notice.key)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy('')
     }
-  }, [base, isAvoidance, notice.domain, notice.key, onError, onHandled])
+  }, [base, isAvoidance, notice.domain, notice.key, onError, onHandled, requestIds])
 
   return (
     <div className={css.messageCard} data-tone={tone}>
@@ -118,49 +122,52 @@ function ProbeMessage(props: {
   )
 }
 
-/** One delight message card. */
-function DelightMessage(props: {
+/** One spotlight message card. */
+function SpotlightMessage(props: {
   base: string
-  notice: DelightNotice
-  onHandled: (bvid: string) => void
+  notice: SpotlightNotice
+  onHandled: (article_id: string) => void
   onError: (text: string) => void
 }): React.JSX.Element {
   const { base, notice, onHandled, onError } = props
   const [busy, setBusy] = useState('')
+  const [requestIds] = useState(() => ({ open: stableId(), like: stableId(), dislike: stableId(), ignore: stableId(), chat: stableId() }))
   const act = useCallback(async (response: string) => {
     setBusy(response)
     try {
-      await respondToDelight(base, { bvid: notice.bvid, response, title: notice.title, request_id: stableId() })
-      onHandled(notice.bvid)
+      await respondToSpotlight(base, { article_id: notice.article_id, response, title: notice.title, request_id: requestIds[response as keyof typeof requestIds] ?? stableId() })
+      onHandled(notice.article_id)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy('')
     }
-  }, [base, notice.bvid, notice.title, onError, onHandled])
+  }, [base, notice.article_id, notice.title, onError, onHandled, requestIds])
 
   return (
-    <div className={css.messageCard} data-tone="delight">
+    <div className={css.messageCard} data-tone="spotlight">
       <div className={css.messageType}>✨ 惊喜推荐</div>
       <div className={css.messageTitle}>{notice.title}</div>
       {notice.reason !== '' ? <div className={css.messageBody}>{notice.reason}</div> : null}
       <div className={css.messageActions}>
         <ActionButton
-          label="去看看"
+          label="打开原文"
           primary
-          disabled={busy !== ''}
-          onClick={() => openItem(base, {
-            recommendation_id: undefined,
-            content_id: notice.content_id !== '' ? notice.content_id : notice.bvid,
-            bvid: notice.bvid,
-            content_url: notice.content_url,
-            source_platform: notice.source_platform,
-            title: notice.title,
-          })}
+          disabled={busy !== '' || notice.content_url === ''}
+          onClick={() => {
+            void act('open')
+            openItem(base, {
+              recommendation_id: undefined,
+              content_id: notice.content_id !== '' ? notice.content_id : notice.article_id,
+              article_id: notice.article_id,
+              content_url: notice.content_url,
+              media: notice.media,
+              title: notice.title,
+            })
+          }}
         />
-        <ActionButton label="已看" disabled={busy !== ''} onClick={() => void act('view')} />
         <ActionButton label="喜欢" disabled={busy !== ''} onClick={() => void act('like')} />
-        <ActionButton label="不再推荐" disabled={busy !== ''} onClick={() => void act('dismiss')} />
+        <ActionButton label="忽略" disabled={busy !== ''} onClick={() => void act('ignore')} />
       </div>
     </div>
   )
@@ -170,21 +177,22 @@ function DelightMessage(props: {
 function NotificationMessage(props: {
   base: string
   notice: RecommendationNotice
-  onHandled: (bvid: string) => void
+  onHandled: (article_id: string) => void
 }): React.JSX.Element {
   const { base, notice, onHandled } = props
   return (
     <div className={css.messageCard}>
       <div className={css.messageType}>🔔 值得一看</div>
-      <div className={css.messageTitle}>{notice.title !== '' ? notice.title : notice.bvid}</div>
+      <div className={css.messageTitle}>{notice.title !== '' ? notice.title : notice.article_id}</div>
       {notice.reason !== '' ? <div className={css.messageBody}>{notice.reason}</div> : null}
       <div className={css.messageActions}>
         <ActionButton
-          label="去看看"
+          label="打开原文"
           primary
+          disabled={notice.original_url === ''}
           onClick={() => {
-            openItem(base, { content_id: notice.bvid, bvid: notice.bvid, content_url: '', source_platform: 'bilibili', title: notice.title })
-            onHandled(notice.bvid)
+            openItem(base, { content_id: notice.article_id, article_id: notice.article_id, content_url: notice.original_url, media: notice.media, title: notice.title })
+            onHandled(notice.article_id)
           }}
         />
       </div>
@@ -196,16 +204,16 @@ function NotificationMessage(props: {
 export function MessagesDrawer(props: {
   base: string
   probes: ProbeNotice[]
-  delights: DelightNotice[]
+  spotlights: SpotlightNotice[]
   notifications: RecommendationNotice[]
   onClose: () => void
   onProbeHandled: (key: string) => void
-  onDelightHandled: (bvid: string) => void
-  onNotificationHandled: (bvid: string) => void
+  onSpotlightHandled: (article_id: string) => void
+  onNotificationHandled: (article_id: string) => void
   onError: (text: string) => void
 }): React.JSX.Element {
-  const { base, probes, delights, notifications, onClose, onProbeHandled, onDelightHandled, onNotificationHandled, onError } = props
-  const isEmpty = probes.length === 0 && delights.length === 0 && notifications.length === 0
+  const { base, probes, spotlights, notifications, onClose, onProbeHandled, onSpotlightHandled, onNotificationHandled, onError } = props
+  const isEmpty = probes.length === 0 && spotlights.length === 0 && notifications.length === 0
 
   return (
     <div className={css.drawerOverlay} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -224,13 +232,13 @@ export function MessagesDrawer(props: {
           </div>
         ) : null}
         {notifications.map(notice => (
-          <NotificationMessage key={`notif:${notice.bvid}`} base={base} notice={notice} onHandled={onNotificationHandled} />
+          <NotificationMessage key={`notif:${notice.article_id}`} base={base} notice={notice} onHandled={onNotificationHandled} />
         ))}
         {probes.map(notice => (
           <ProbeMessage key={notice.key} base={base} notice={notice} onHandled={onProbeHandled} onError={onError} />
         ))}
-        {delights.map(notice => (
-          <DelightMessage key={`delight:${notice.bvid}`} base={base} notice={notice} onHandled={onDelightHandled} onError={onError} />
+        {spotlights.map(notice => (
+          <SpotlightMessage key={`spotlight:${notice.article_id}`} base={base} notice={notice} onHandled={onSpotlightHandled} onError={onError} />
         ))}
       </div>
     </div>
@@ -249,30 +257,30 @@ function toProbeNotice(item: ProbeItem, type: 'interest.probe' | 'avoidance.prob
   }
 }
 
-/** Build a delight notice from a delight payload. */
-export function toDelightNotice(item: DelightItem): DelightNotice {
+/** Build a spotlight notice from a spotlight payload. */
+export function toSpotlightNotice(item: SpotlightItem): SpotlightNotice {
   return {
-    bvid: item.bvid,
+    article_id: item.article_id,
     title: item.title,
-    reason: item.delight_reason,
-    hook: item.delight_hook,
-    source_platform: item.source_platform,
+    reason: item.spotlight_reason,
+    hook: item.spotlight_hook,
+    media: item.media,
     content_url: item.content_url,
     content_id: item.content_id,
-    score: item.delight_score,
+    score: item.spotlight_score,
   }
 }
 
-/** Hydrate the drawer from the REST surfaces (probes + delights + notification). */
+/** Hydrate the drawer from the REST surfaces (probes + spotlights + notification). */
 export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<string>): Promise<{
   probes: ProbeNotice[]
-  delights: DelightNotice[]
+  spotlights: SpotlightNotice[]
   notifications: RecommendationNotice[]
 }> {
-  const [interests, avoidances, delights, notification] = await Promise.all([
+  const [interests, avoidances, spotlights, notification] = await Promise.all([
     fetchInterestProbes(base).catch(() => []),
     fetchAvoidanceProbes(base).catch(() => []),
-    fetchDelightBatch(base).catch(() => []),
+    fetchSpotlightBatch(base).catch(() => []),
     fetchPendingNotification(base).catch(() => null),
   ])
   const probeNotice = (p: ProbeItem, type: 'interest.probe' | 'avoidance.probe'): ProbeNotice | null => {
@@ -286,9 +294,9 @@ export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<str
       ...interests.map(p => probeNotice(p, 'interest.probe')).filter((n): n is ProbeNotice => n !== null),
       ...avoidances.map(p => probeNotice(p, 'avoidance.probe')).filter((n): n is ProbeNotice => n !== null),
     ],
-    delights: delights.map(toDelightNotice),
+    spotlights: spotlights.map(toSpotlightNotice),
     notifications: notification !== null
-      ? [{ bvid: notification.bvid, title: notification.title, reason: notification.reason }]
+      ? [{ article_id: notification.article_id, title: notification.title, reason: notification.reason, media: notification.media, original_url: notification.original_url }]
       : [],
   }
 }

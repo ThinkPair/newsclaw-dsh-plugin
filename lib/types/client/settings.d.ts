@@ -1,5 +1,4 @@
-/** The settings overlay. */
-export declare function SettingsOverlay(props: {
+export declare function SettingsOverlay({ base, onBaseChange, onClose }: {
     base: string;
     onBaseChange: (base: string) => void;
     onClose: () => void;

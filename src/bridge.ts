@@ -1,23 +1,20 @@
 /**
  * Agent-bridge invocation over HTTP. Every tool POSTs to the running
  * serve-api's `/api/agent-bridge` endpoint (the host-neutral agent-bridge/v2
- * JSON contract OpenClaw/Hermes/WorkBuddy share), which dispatches against a
- * warm in-process OpenClawAdapter — avoiding the per-call Python import cold
- * start of shelling out to the CLI. Parses the JSON reply, and turns
+ * JSON contract), which dispatches against a warm in-process adapter and
+ * avoids per-call process startup. Parses the JSON reply, and turns
  * `{"ok": false, ...}` payloads into thrown errors — the skill's working
  * rules: parse JSON, surface errors, stop.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 
 /** Resolved plugin config (defaults applied in the plugin entry). */
 export interface BridgeConfig {
-  /** Base URL of the running OpenBiliClaw serve-api (default http://127.0.0.1:8420). */
+  /** Base URL of the running NewsClaw serve-api (default http://127.0.0.1:8430). */
   apiUrl: string
-  /** OpenBiliClaw checkout directory (config.toml + data/ live here). */
-  workdir: string
-  /** Absolute path of the adapter SKILL.md, or '' to skip registration. */
-  skillPath: string
+  /** Adapter SKILL.md path or bundled file URL. */
+  skillPath: string | URL
   /** Per-command budget in ms. */
   timeoutMs: number
 }
@@ -43,31 +40,53 @@ export interface BridgeError {
   [key: string]: unknown
 }
 
+const SECRET_KEY = /(?:token|api[_-]?key|authorization|cookie|secret|password)/i
+
+/** Redact credential-looking fragments before errors or Agent output. */
+export function redactText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:token|api[_-]?key|authorization|cookie|secret|password)\s*[=:]\s*)[^\s,;"'}]+/gi, '$1[REDACTED]')
+}
+
+/** Recursively remove credential values even if a backend forgets to mask them. */
+export function sanitizeBridgeValue(value: unknown): JsonValue {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value
+  if (typeof value === 'string') return redactText(value)
+  if (Array.isArray(value)) return value.map(sanitizeBridgeValue)
+  if (typeof value !== 'object') return String(value)
+  const output: Record<string, JsonValue> = {}
+  for (const [key, nested] of Object.entries(value)) {
+    output[key] = SECRET_KEY.test(key) ? '[REDACTED]' : sanitizeBridgeValue(nested)
+  }
+  return output
+}
+
 /** Parse the bridge's single JSON reply object. */
 export function parseBridgeLine(text: string): BridgeOk | BridgeError {
   const trimmed = text.trim()
-  if (trimmed === '') throw new Error('openbiliclaw bridge: empty reply')
+  if (trimmed === '') throw new Error('newsclaw bridge: empty reply')
   let parsed: unknown
   try {
     parsed = JSON.parse(trimmed)
   } catch {
-    throw new Error(`openbiliclaw bridge: non-JSON reply: ${trimmed.slice(0, 400)}`)
+    throw new Error(`newsclaw bridge: non-JSON reply: ${redactText(trimmed.slice(0, 400))}`)
   }
   if (typeof parsed !== 'object' || parsed === null) {
-    throw new Error(`openbiliclaw bridge: unexpected payload shape: ${trimmed.slice(0, 400)}`)
+    throw new Error(`newsclaw bridge: unexpected payload shape: ${redactText(trimmed.slice(0, 400))}`)
   }
   const reply = parsed as Record<string, unknown>
   if (reply.ok !== true) {
     const err = reply as BridgeError
-    throw new Error(`openbiliclaw bridge error: ${String(err.error ?? err.message ?? 'unknown')}`)
+    throw new Error(`newsclaw bridge error: ${redactText(String(err.error ?? err.message ?? 'unknown'))}`)
   }
   return { ok: true, data: reply.data }
 }
 
 /**
  * Build the bridge face over HTTP to the serve-api's `/api/agent-bridge`
- * endpoint.  The serve-api keeps a warm in-process OpenClawAdapter, so these
- * calls are fast (no Python subprocess per tool call).
+ * endpoint. The serve-api keeps a warm in-process adapter, so these calls do
+ * not launch a subprocess per tool invocation.
  * @param config - resolved plugin config.
  * @returns the bridge face.
  */
@@ -87,10 +106,10 @@ export function createBridge(config: BridgeConfig): Bridge {
         })
         const text = await resp.text()
         if (!resp.ok) {
-          throw new Error(`openbiliclaw bridge HTTP ${resp.status}: ${text.slice(-1500)}`)
+          throw new Error(`newsclaw bridge HTTP ${resp.status}: ${redactText(text.slice(-1500))}`)
         }
         const reply = parseBridgeLine(text)
-        return reply.data as JsonValue
+        return sanitizeBridgeValue(reply.data)
       } finally {
         clearTimeout(timer)
       }

@@ -3,10 +3,10 @@
  * controller appends to the frame grid. The root waits for its column (the
  * shell mounts asynchronously), and any DOM failure degrades the panel, never
  * the GUI boot.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import { createRoot, type Root } from 'react-dom/client'
-import { OpenBiliClawPanel } from './OpenBiliClawPanel.tsx'
+import { NewsClawPanel } from './NewsClawPanel.tsx'
 import { PANEL_COL_SELECTOR, type PanelLayoutController } from './layout.ts'
 
 /** Theme face the panel follows (host light/dark scheme). */
@@ -37,7 +37,7 @@ function waitForElement(selector: string, onFound: (el: HTMLElement) => void): (
 }
 
 /**
- * Mount the OpenBiliClaw panel into the appended column.
+ * Mount the NewsClaw panel into the appended column.
  * @param controller - the layout controller (owns open/close).
  * @param theme - the shell theme face.
  * @returns a disposer unmounting the tree.
@@ -47,7 +47,7 @@ export function mountPanel(controller: PanelLayoutController, theme: PanelThemeF
   const dispose = waitForElement(PANEL_COL_SELECTOR, (el) => {
     root = createRoot(el)
     root.render(
-      <OpenBiliClawPanel
+      <NewsClawPanel
         closePanel={() => { controller.setOpen(false) }}
         isDark={theme.isDark}
         onThemeChange={theme.onThemeChange}

@@ -1,17 +1,17 @@
 /**
- * Runtime-stream WebSocket client: real-time push events (delight candidates,
+ * Runtime-stream WebSocket client: real-time push events (spotlight candidates,
  * interest/avoidance probes and their outcomes) with automatic reconnect and
  * a small dedupe window so a reconnect burst does not double-fire.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 
 /** Stream event types the sidebar cares about. */
 export type LiveEventType =
-  | 'delight.candidate'
-  | 'delight.liked'
-  | 'delight.disliked'
-  | 'delight.chat'
-  | 'delight.refreshed'
+  | 'spotlight.candidate'
+  | 'spotlight.liked'
+  | 'spotlight.disliked'
+  | 'spotlight.chat'
+  | 'spotlight.refreshed'
   | 'interest.probe'
   | 'interest.confirmed'
   | 'interest.rejected'
@@ -138,9 +138,9 @@ export class LiveClient {
     const type = typeof payload.type === 'string' ? payload.type : ''
     if (type === '' || type === 'connected') return
     const now = Date.now()
-    const last = this.#lastSeen.get(type + (typeof payload.bvid === 'string' ? payload.bvid : payload.domain ?? ''))
+    const last = this.#lastSeen.get(type + (typeof payload.article_id === 'string' ? payload.article_id : payload.domain ?? ''))
     if (last !== undefined && now - last < DEDUPE_MS) return
-    this.#lastSeen.set(type + (typeof payload.bvid === 'string' ? payload.bvid : payload.domain ?? ''), now)
+    this.#lastSeen.set(type + (typeof payload.article_id === 'string' ? payload.article_id : payload.domain ?? ''), now)
     const event: LiveEvent = { type, payload }
     for (const listener of [...this.#listeners]) {
       try { listener(event) } catch { /* one bad listener must not kill the stream */ }

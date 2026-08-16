@@ -1,13 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis';
 /** Plugin id for loader rows. */
-export declare const name = "openbiliclaw";
-/** Required services: the tool registry, the skill registry, and the shell
- *  executor (the renamed `bash` seam in newer DSH snapshots). */
+export declare const name = "newsclaw";
+/** Required services: the tool registry and the skill registry. */
 export declare const inject: string[];
 /** Raw row config (no schema — every field defaults in code). */
-export interface OpenBiliClawRowConfig {
+export interface NewsClawRowConfig {
     apiUrl?: string;
-    workdir?: string;
     skillPath?: string;
     timeoutMs?: number;
 }
@@ -16,5 +14,5 @@ export interface OpenBiliClawRowConfig {
  * @param ctx - plugin context.
  * @param config - raw row config (optional; defaults apply).
  */
-export declare function apply(ctx: Context, config?: OpenBiliClawRowConfig): void;
+export declare function apply(ctx: Context, config?: NewsClawRowConfig): void;
 //# sourceMappingURL=index.d.ts.map

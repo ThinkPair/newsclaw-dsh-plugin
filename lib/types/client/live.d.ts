@@ -1,11 +1,11 @@
 /**
- * Runtime-stream WebSocket client: real-time push events (delight candidates,
+ * Runtime-stream WebSocket client: real-time push events (spotlight candidates,
  * interest/avoidance probes and their outcomes) with automatic reconnect and
  * a small dedupe window so a reconnect burst does not double-fire.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 /** Stream event types the sidebar cares about. */
-export type LiveEventType = 'delight.candidate' | 'delight.liked' | 'delight.disliked' | 'delight.chat' | 'delight.refreshed' | 'interest.probe' | 'interest.confirmed' | 'interest.rejected' | 'interest.deferred' | 'interest.chat' | 'avoidance.probe' | 'avoidance.confirmed' | 'avoidance.rejected' | 'avoidance.deferred' | 'avoidance.chat';
+export type LiveEventType = 'spotlight.candidate' | 'spotlight.liked' | 'spotlight.disliked' | 'spotlight.chat' | 'spotlight.refreshed' | 'interest.probe' | 'interest.confirmed' | 'interest.rejected' | 'interest.deferred' | 'interest.chat' | 'avoidance.probe' | 'avoidance.confirmed' | 'avoidance.rejected' | 'avoidance.deferred' | 'avoidance.chat';
 /** One decoded stream message. */
 export interface LiveEvent {
     type: string;

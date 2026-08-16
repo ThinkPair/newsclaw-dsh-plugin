@@ -1,5 +1,5 @@
 /** Business face passed to the panel by the DOM mount. */
-export interface OpenBiliClawInjected {
+export interface NewsClawInjected {
     /** Close the panel column (driven by the panel's collapse button). */
     closePanel: () => void;
     /** Whether the shell theme is currently dark. */
@@ -8,10 +8,10 @@ export interface OpenBiliClawInjected {
     onThemeChange: (listener: (dark: boolean) => void) => () => void;
 }
 /** Panel props: the business face passed by the DOM mount (close + theme). */
-export type OpenBiliClawPanelProps = OpenBiliClawInjected;
+export type NewsClawPanelProps = NewsClawInjected;
 /**
- * The panel column body: OpenBiliClaw user-consumption panel.
+ * The panel column body: NewsClaw user-consumption panel.
  * @param props - injected actions (close + theme).
  */
-export declare function OpenBiliClawPanel({ closePanel, isDark, onThemeChange }: OpenBiliClawPanelProps): React.JSX.Element;
-//# sourceMappingURL=OpenBiliClawPanel.d.ts.map
+export declare function NewsClawPanel({ closePanel, isDark, onThemeChange }: NewsClawPanelProps): React.JSX.Element;
+//# sourceMappingURL=NewsClawPanel.d.ts.map

@@ -1,5 +1,5 @@
 /**
- * OpenBiliClaw DeepSeek Harness plugin — browser half.
+ * NewsClaw DeepSeek Harness plugin — browser half.
  *
  * The official DSH layout has no root-scoped `aside` slot and `ctx.layout` has
  * no aside verbs, so the panel cannot claim a column through the slot system.
@@ -12,10 +12,10 @@
  * The only slot registration is the left-sidebar trigger button
  * (`sidebar.footer.action`), which toggles the column. The panel's business
  * face (close + theme) is passed by the DOM mount, not a slot inject.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
-export type { OpenBiliClawPanelProps, OpenBiliClawInjected } from './OpenBiliClawPanel.tsx';
+export type { NewsClawPanelProps, NewsClawInjected } from './NewsClawPanel.tsx';
 /** Required services: the slot registry (trigger button) and the shell theme. */
 export declare const inject: string[];
 /**

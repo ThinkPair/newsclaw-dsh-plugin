@@ -1,5 +1,5 @@
 /**
- * DOM layout controller for the OpenBiliClaw panel column.
+ * DOM layout controller for the NewsClaw panel column.
  *
  * The official DSH frame is a three-column grid (`sidebar | center | details`);
  * there is no root-scoped `aside` slot and `ctx.layout` has no aside verbs, so
@@ -13,7 +13,7 @@
  *
  * Collapsing keeps the column mounted at width 0. Failure policy: DOM wiring
  * errors are logged, never thrown — a plugin apply throw fails the whole GUI.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { StateHandle } from './store.ts'
 import {
@@ -23,7 +23,7 @@ import {
 import { handlePointerDragStart } from './drag.ts'
 
 /** The column element marker (mount.tsx targets it). */
-export const PANEL_COL_SELECTOR = '[data-obc-panel-col]'
+export const PANEL_COL_SELECTOR = '[data-newsclaw-panel-col]'
 
 /** Parse an inline grid-template-columns string into its tracks (paren-safe). */
 export function parseGridTracks(input: string): string[] {
@@ -89,7 +89,7 @@ export class PanelLayoutController {
     this.frame = frame
 
     const column = document.createElement('div')
-    column.dataset.obcPanelCol = ''
+    column.dataset.newsclawPanelCol = ''
     column.style.minWidth = '0'
     column.style.overflow = 'hidden'
     column.style.display = 'flex'
@@ -155,7 +155,7 @@ export class PanelLayoutController {
   /** Create the drag handle and wire its pointer drag. */
   private createHandle(): HTMLDivElement {
     const el = document.createElement('div')
-    el.className = 'obc-panel-handle'
+    el.className = 'newsclaw-panel-handle'
     el.style.position = 'absolute'
     el.style.top = '0'
     el.style.bottom = '0'
@@ -198,8 +198,11 @@ export class PanelLayoutController {
     const sidebar = this.shellTracks.length >= 1 ? trackPx(this.shellTracks[0] ?? '') : 0
     const details = this.shellTracks.length >= 3 ? trackPx(this.shellTracks[2] ?? '') : 0
     const available = Math.max(0, this.frameWidth - sidebar - details)
-    const maxByContainer = Math.max(PANEL_MIN_WIDTH_PX, available - MIN_CHAT_PX)
-    return Math.min(PANEL_MAX_WIDTH_PX, Math.min(requested, maxByContainer))
+    const maxByContainer = available - MIN_CHAT_PX
+    // Both contracts cannot fit below 680px of usable room. Collapse the
+    // panel column until the window grows instead of stealing chat space.
+    if (maxByContainer < PANEL_MIN_WIDTH_PX) return 0
+    return Math.min(PANEL_MAX_WIDTH_PX, maxByContainer, Math.max(PANEL_MIN_WIDTH_PX, requested))
   }
 
   /**

@@ -1,16 +1,16 @@
 /**
- * OpenBiliClaw REST client for the browser half. Talks to the user's local
+ * NewsClaw REST client for the browser half. Talks to the user's local
  * backend directly (CORS is permissive); the base URL is user-configurable
  * and persisted in localStorage. Only user-consumption endpoints are used —
  * nothing crawling/source-management related.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 
 /** localStorage key for the API base URL. */
-export const API_BASE_KEY = 'openbiliclaw.apiBase'
+export const API_BASE_KEY = 'newsclaw.apiBase'
 
 /** Default local backend address. */
-export const DEFAULT_API_BASE = 'http://127.0.0.1:8420'
+export const DEFAULT_API_BASE = 'http://127.0.0.1:8430'
 
 /** Read the persisted API base URL (falling back to the default). */
 export function readApiBase(): string {
@@ -35,50 +35,49 @@ export function writeApiBase(base: string): void {
 /** One recommendation card (RecommendationOut, defensive subset). */
 export interface RecommendationItem {
   id: number
-  bvid: string
+  article_id: string
   item_key: string
   title: string
-  up_name: string
+  publisher_name: string
+  technical_provider: string
   cover_url: string
   expression: string
+  why_for_you: string
+  impact_chain: string[]
+  observation_points: string[]
   topic_label: string
   content_id: string
   content_url: string
-  source_platform: string
+  original_url: string
+  media: string
+  body_level: string
   content_type: string
   body_text: string
   published_label: string
   published_at: string
   presented: boolean
-  view_count: number
-  like_count: number
-  comment_count: number
-  share_count: number
-  danmaku_count: number
-  favorite_count: number
 }
 
-/** One proactive delight card (PendingDelightOut subset). */
-export interface DelightItem {
-  bvid: string
+/** One proactive spotlight card (PendingSpotlightOut subset). */
+export interface SpotlightItem {
+  article_id: string
   item_key: string
   content_id: string
   title: string
-  delight_reason: string
-  delight_score: number
-  delight_hook: string
+  spotlight_reason: string
+  spotlight_score: number
+  spotlight_hook: string
   cover_url: string
   content_url: string
-  source_platform: string
+  original_url: string
+  media: string
+  technical_provider: string
+  body_level: string
+  impact_chain: string[]
+  observation_points: string[]
   published_label: string
   content_type: string
   body_text: string
-  view_count: number
-  like_count: number
-  comment_count: number
-  share_count: number
-  danmaku_count: number
-  favorite_count: number
   state?: string
 }
 
@@ -95,7 +94,8 @@ export interface ProbeItem {
 /** One saved membership (SavedListItem subset). */
 export interface SavedItem {
   item_key: string
-  source_platform: string
+  article_id: string
+  media: string
   content_id: string
   content_url: string
   content_type: string
@@ -104,35 +104,22 @@ export interface SavedItem {
   cover_url: string
   note: string
   added_at: string
-  sync_status: string
-  sync_task_id: string
-  requested_action: string
-  resolved_action: string
-  resolved_target: string
-  error_code: string
-  error_message: string
-}
-
-/** One per-item native-sync result inside a saved-sync task. */
-export interface SavedSyncItem {
-  item_key: string
-  status: string
-  resolved_action: string
-  resolved_target: string
-  error_code: string
-  error_message: string
-}
-
-/** Durable native-sync batch returned at creation and polling. */
-export interface SavedSyncBatch {
-  task_id: string
-  items: SavedSyncItem[]
 }
 
 /** One page of saved memberships with the backend total count. */
 export interface SavedListPage {
   items: SavedItem[]
   total: number
+}
+
+/** One news source's runtime state, independent from editable config. */
+export interface SourceAvailability {
+  id: string
+  media: string
+  technical_provider: string
+  state: HealthState | 'unknown'
+  last_success_at: string
+  error: string
 }
 
 /** One chat turn. */
@@ -154,7 +141,7 @@ export interface ChatTurn {
 /** One 30-day content-history item. */
 export interface ContentHistoryItem {
   item_key: string
-  source_platform: string
+  media: string
   content_id: string
   content_url: string
   content_type: string
@@ -206,7 +193,7 @@ export interface ProfileSummary {
   motivational_drivers: string[]
   likes: Array<{ domain: string; weight: number; specifics: Array<{ name: string; weight: number }> }>
   dislikes: Array<{ domain: string; weight: number; specifics: Array<{ name: string; weight: number }> }>
-  favorite_up_users: string[]
+  favorite_sources: string[]
   life_stage: string
   current_phase: string
   cognitive_style: string[]
@@ -311,7 +298,7 @@ function withTimeout(ms: number, outer?: AbortSignal): { signal?: AbortSignal; c
   }
 }
 
-/** One raw JSON request against the OpenBiliClaw backend. */
+/** One raw JSON request against the NewsClaw backend. */
 export async function requestJson(
   base: string,
   path: string,
@@ -349,8 +336,8 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** Decode the HTML entities the crawler occasionally leaves in text fields
- *  (e.g. `&gt;&gt;&gt;`); `&amp;` is decoded last so double-escaped text unwraps once. */
+/** Decode HTML entities occasionally returned by RSS/API source payloads;
+ *  `&amp;` is decoded last so double-escaped text unwraps once. */
 function decodeEntities(value: string): string {
   if (value.indexOf('&') === -1) return value
   return value
@@ -384,7 +371,7 @@ export function normalizeImageUrl(value: unknown): string {
 /**
  * Build the same backend image-proxy URL used by the browser and PC Web
  * clients. Keeping the remote URL behind the local backend avoids hotlink,
- * referrer and CDN CORS failures (notably xhscdn.com and i.ytimg.com).
+ * referrer and media-CDN CORS failures.
  */
 export function imageProxyUrl(base: string, value: unknown): string {
   const url = normalizeImageUrl(value)
@@ -433,52 +420,51 @@ function coverUrl(row: Record<string, unknown>): string {
 function toRecommendation(row: Record<string, unknown>): RecommendationItem {
   return {
     id: num(row.id),
-    bvid: str(row.bvid),
-    item_key: str(row.item_key),
+    article_id: firstText(row.article_id, row.content_id, row.item_key),
+    item_key: firstText(row.item_key, row.article_id, row.content_id),
     title: str(row.title),
-    up_name: str(row.up_name),
+    publisher_name: firstText(row.publisher_name, row.author_name, row.media),
+    technical_provider: firstText(row.technical_provider, row.provider),
     cover_url: coverUrl(row),
-    expression: str(row.expression),
+    expression: firstText(row.why_for_you, row.expression, row.recommendation_reason),
+    why_for_you: firstText(row.why_for_you, row.expression, row.recommendation_reason),
+    impact_chain: Array.isArray(row.impact_chain) ? row.impact_chain.map(String) : [],
+    observation_points: Array.isArray(row.observation_points) ? row.observation_points.map(String) : [],
     topic_label: str(row.topic_label),
-    content_id: str(row.content_id),
-    content_url: str(row.content_url),
-    source_platform: str(row.source_platform),
-    content_type: str(row.content_type),
-    body_text: str(row.body_text),
+    content_id: firstText(row.content_id, row.article_id),
+    content_url: firstText(row.original_url, row.content_url),
+    original_url: firstText(row.original_url, row.content_url),
+    media: str(row.media),
+    body_level: firstText(row.body_level, row.content_level, 'title'),
+    content_type: firstText(row.content_type, 'article'),
+    body_text: firstText(row.body_text, row.body, row.content, row.summary),
     published_label: str(row.published_label),
     published_at: str(row.published_at),
     presented: row.presented === true,
-    view_count: num(row.view_count),
-    like_count: num(row.like_count),
-    comment_count: num(row.comment_count),
-    share_count: num(row.share_count),
-    danmaku_count: num(row.danmaku_count),
-    favorite_count: num(row.favorite_count),
   }
 }
 
-/** Defensive coercion of one delight row. */
-function toDelight(row: Record<string, unknown>): DelightItem {
+/** Defensive coercion of one spotlight row. */
+function toSpotlight(row: Record<string, unknown>): SpotlightItem {
   return {
-    bvid: str(row.bvid),
-    item_key: str(row.item_key),
-    content_id: str(row.content_id),
+    article_id: firstText(row.article_id, row.content_id, row.item_key),
+    item_key: firstText(row.item_key, row.article_id, row.content_id),
+    content_id: firstText(row.content_id, row.article_id),
     title: str(row.title),
-    delight_reason: str(row.delight_reason),
-    delight_score: num(row.delight_score),
-    delight_hook: str(row.delight_hook),
+    spotlight_reason: str(row.spotlight_reason),
+    spotlight_score: num(row.spotlight_score),
+    spotlight_hook: str(row.spotlight_hook),
     cover_url: coverUrl(row),
-    content_url: str(row.content_url),
-    source_platform: str(row.source_platform),
+    content_url: firstText(row.original_url, row.content_url),
+    original_url: firstText(row.original_url, row.content_url),
+    media: str(row.media),
+    technical_provider: firstText(row.technical_provider, row.provider),
+    body_level: firstText(row.body_level, row.content_level, 'title'),
+    impact_chain: Array.isArray(row.impact_chain) ? row.impact_chain.map(String) : [],
+    observation_points: Array.isArray(row.observation_points) ? row.observation_points.map(String) : [],
     published_label: str(row.published_label),
     content_type: str(row.content_type),
     body_text: str(row.body_text),
-    view_count: num(row.view_count),
-    like_count: num(row.like_count),
-    comment_count: num(row.comment_count),
-    share_count: num(row.share_count),
-    danmaku_count: num(row.danmaku_count),
-    favorite_count: num(row.favorite_count),
     state: str(row.state),
   }
 }
@@ -498,35 +484,17 @@ function toProbe(row: Record<string, unknown>): ProbeItem {
 /** Defensive coercion of one saved row. */
 function toSaved(row: Record<string, unknown>): SavedItem {
   return {
-    item_key: str(row.item_key),
-    source_platform: str(row.source_platform),
-    content_id: str(row.content_id),
-    content_url: str(row.content_url),
+    item_key: firstText(row.item_key, row.article_id, row.content_id),
+    article_id: firstText(row.article_id, row.content_id, row.item_key),
+    media: str(row.media),
+    content_id: firstText(row.content_id, row.article_id),
+    content_url: firstText(row.original_url, row.content_url),
     content_type: str(row.content_type),
     title: str(row.title),
     author_name: str(row.author_name),
     cover_url: coverUrl(row),
     note: str(row.note),
     added_at: str(row.added_at),
-    sync_status: str(row.sync_status),
-    sync_task_id: str(row.sync_task_id),
-    requested_action: str(row.requested_action),
-    resolved_action: str(row.resolved_action),
-    resolved_target: str(row.resolved_target),
-    error_code: str(row.error_code),
-    error_message: str(row.error_message),
-  }
-}
-
-/** Defensive coercion of one saved-sync result row. */
-function toSyncItem(row: Record<string, unknown>): SavedSyncItem {
-  return {
-    item_key: str(row.item_key),
-    status: str(row.status),
-    resolved_action: str(row.resolved_action),
-    resolved_target: str(row.resolved_target),
-    error_code: str(row.error_code),
-    error_message: str(row.error_message),
   }
 }
 
@@ -541,12 +509,12 @@ export async function fetchRecommendations(base: string, signal?: AbortSignal): 
 /** POST /api/recommendations/reshuffle — replace the current page. */
 export async function reshuffleRecommendations(
   base: string,
-  opts: { sourcePlatform?: string; excludedBvids?: string[] } = {},
+  opts: { media?: string; excludedArticleIds?: string[] } = {},
   signal?: AbortSignal,
 ): Promise<RecommendationItem[]> {
   const body: Record<string, unknown> = {}
-  if (opts.sourcePlatform !== undefined && opts.sourcePlatform !== '') body.source_platform = opts.sourcePlatform
-  if (opts.excludedBvids !== undefined && opts.excludedBvids.length > 0) body.excluded_bvids = opts.excludedBvids
+  if (opts.media !== undefined && opts.media !== '') body.media = opts.media
+  if (opts.excludedArticleIds !== undefined && opts.excludedArticleIds.length > 0) body.excluded_article_ids = opts.excludedArticleIds
   const data = await requestJson(base, '/api/recommendations/reshuffle', { method: 'POST', body, timeoutMs: 20_000, signal })
   return asItems(data).map(toRecommendation)
 }
@@ -554,12 +522,12 @@ export async function reshuffleRecommendations(
 /** POST /api/recommendations/append — append another page. */
 export async function appendRecommendations(
   base: string,
-  opts: { sourcePlatform?: string; excludedBvids?: string[] } = {},
+  opts: { media?: string; excludedArticleIds?: string[] } = {},
   signal?: AbortSignal,
 ): Promise<RecommendationItem[]> {
   const body: Record<string, unknown> = {}
-  if (opts.sourcePlatform !== undefined && opts.sourcePlatform !== '') body.source_platform = opts.sourcePlatform
-  if (opts.excludedBvids !== undefined && opts.excludedBvids.length > 0) body.excluded_bvids = opts.excludedBvids
+  if (opts.media !== undefined && opts.media !== '') body.media = opts.media
+  if (opts.excludedArticleIds !== undefined && opts.excludedArticleIds.length > 0) body.excluded_article_ids = opts.excludedArticleIds
   const data = await requestJson(base, '/api/recommendations/append', { method: 'POST', body, timeoutMs: 20_000, signal })
   return asItems(data).map(toRecommendation)
 }
@@ -567,7 +535,7 @@ export async function appendRecommendations(
 /** POST /api/recommendation-click — record a click-through (stable request_id). */
 export async function reportClick(
   base: string,
-  payload: { recommendation_id?: number; content_id?: string; bvid?: string; content_url?: string; source_platform?: string; title?: string; request_id: string },
+  payload: { recommendation_id?: number; content_id?: string; article_id?: string; content_url?: string; media?: string; title?: string; request_id: string },
   signal?: AbortSignal,
 ): Promise<void> {
   await requestJson(base, '/api/recommendation-click', { method: 'POST', body: { ...payload }, timeoutMs: 10_000, signal })
@@ -588,12 +556,11 @@ export interface BehaviorEvent {
   url?: string
   title?: string
   timestamp: number
-  source_platform?: string
+  media?: string
   context?: Record<string, unknown>
   metadata?: Record<string, unknown>
   event_id: string
-  watch_seconds?: number
-  video_duration_seconds?: number
+  reading_seconds?: number
 }
 
 /** POST /api/events — ingest behavior events (e.g. saved-card feedback). */
@@ -621,14 +588,14 @@ export async function sendBehaviorEvents(
   }
 }
 
-/** GET /api/delight/pending-batch — the full un-notified delight queue. */
-export async function fetchDelightBatch(base: string, signal?: AbortSignal): Promise<DelightItem[]> {
-  const data = await requestJson(base, '/api/delight/pending-batch?limit=20', { timeoutMs: 15_000, signal })
-  return asItems(data).map(toDelight)
+/** GET /api/spotlight/pending-batch — the full un-notified spotlight queue. */
+export async function fetchSpotlightBatch(base: string, signal?: AbortSignal): Promise<SpotlightItem[]> {
+  const data = await requestJson(base, '/api/spotlight/pending-batch?limit=20', { timeoutMs: 15_000, signal })
+  return asItems(data).map(toSpotlight)
 }
 
 /** GET /api/notifications/pending — one notification-worthy recommendation. */
-export async function fetchPendingNotification(base: string, signal?: AbortSignal): Promise<{ recommendation_id: number; bvid: string; title: string; reason: string } | null> {
+export async function fetchPendingNotification(base: string, signal?: AbortSignal): Promise<{ recommendation_id: number; article_id: string; title: string; reason: string; media: string; original_url: string } | null> {
   try {
     const data = await requestJson(base, '/api/notifications/pending', { timeoutMs: 8_000, signal })
     if (typeof data !== 'object' || data === null) return null
@@ -637,22 +604,24 @@ export async function fetchPendingNotification(base: string, signal?: AbortSigna
     const item = row as Record<string, unknown>
     return {
       recommendation_id: num(item.recommendation_id),
-      bvid: str(item.bvid),
+      article_id: str(item.article_id),
       title: str(item.title),
       reason: str(item.reason),
+      media: str(item.media),
+      original_url: firstText(item.original_url, item.content_url),
     }
   } catch {
     return null
   }
 }
 
-/** POST /api/delight/respond — view/like/dislike/dismiss/chat (stable request_id). */
-export async function respondToDelight(
+/** POST /api/spotlight/respond — view/like/dislike/dismiss/chat (stable request_id). */
+export async function respondToSpotlight(
   base: string,
-  payload: { bvid: string; response: string; title?: string; message?: string; request_id: string },
+  payload: { article_id: string; response: string; title?: string; message?: string; request_id: string },
   signal?: AbortSignal,
 ): Promise<unknown> {
-  return requestJson(base, '/api/delight/respond', { method: 'POST', body: { ...payload }, timeoutMs: 20_000, signal })
+  return requestJson(base, '/api/spotlight/respond', { method: 'POST', body: { ...payload }, timeoutMs: 20_000, signal })
 }
 
 /** GET /api/interest-probes/pending — active speculative interests. */
@@ -661,13 +630,13 @@ export async function fetchInterestProbes(base: string, signal?: AbortSignal): P
   return asItems(data).map(toProbe)
 }
 
-/** POST /api/interest-probes/respond — confirm/reject/defer/chat. */
+/** POST /api/interest-probes/respond — confirm/reject/defer/chat, idempotent. */
 export async function respondInterestProbe(
   base: string,
-  payload: { domain: string; response: string; message?: string },
+  payload: { domain: string; response: string; request_id: string; message?: string },
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const body: Record<string, unknown> = { domain: payload.domain, response: payload.response }
+  const body: Record<string, unknown> = { domain: payload.domain, response: payload.response, request_id: payload.request_id }
   if (payload.message !== undefined && payload.message !== '') body.message = payload.message
   return requestJson(base, '/api/interest-probes/respond', { method: 'POST', body, timeoutMs: 20_000, signal })
 }
@@ -678,13 +647,13 @@ export async function fetchAvoidanceProbes(base: string, signal?: AbortSignal): 
   return asItems(data).map(toProbe)
 }
 
-/** POST /api/avoidance-probes/respond — confirm/reject/defer/chat. */
+/** POST /api/avoidance-probes/respond — confirm/reject/defer/chat, idempotent. */
 export async function respondAvoidanceProbe(
   base: string,
-  payload: { domain: string; response: string; message?: string },
+  payload: { domain: string; response: string; request_id: string; message?: string },
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const body: Record<string, unknown> = { domain: payload.domain, response: payload.response }
+  const body: Record<string, unknown> = { domain: payload.domain, response: payload.response, request_id: payload.request_id }
   if (payload.message !== undefined && payload.message !== '') body.message = payload.message
   return requestJson(base, '/api/avoidance-probes/respond', { method: 'POST', body, timeoutMs: 20_000, signal })
 }
@@ -798,7 +767,7 @@ export async function fetchContentHistory(
   return {
     items: (Array.isArray(row.items) ? row.items as Array<Record<string, unknown>> : []).map(item => ({
       item_key: str(item.item_key),
-      source_platform: str(item.source_platform),
+      media: str(item.media),
       content_id: str(item.content_id),
       content_url: str(item.content_url),
       content_type: str(item.content_type),
@@ -839,45 +808,19 @@ export async function fetchSaved(base: string, listKind: 'favorite' | 'watch_lat
   return { items: asItems(data).map(toSaved), total: num(row.total) }
 }
 
-/** POST /api/saved/{listKind}/sync — explicit full/batch native sync.
- *  An empty item_keys array means all eligible rows for this list. */
-export async function syncSavedItems(
-  base: string,
-  listKind: 'favorite' | 'watch_later',
-  itemKeys: string[] = [],
-  signal?: AbortSignal,
-): Promise<SavedSyncBatch> {
-  const data = await requestJson(base, `/api/saved/${listKind}/sync`, {
-    method: 'POST',
-    body: { item_keys: itemKeys.map(key => key.trim()).filter(key => key !== '') },
-    timeoutMs: 20_000,
-    signal,
-  })
-  return toSyncBatch(data)
-}
-
-/** GET /api/saved-sync/tasks/{task_id} — poll one durable native-sync batch. */
-export async function pollSavedSyncTask(base: string, taskId: string, signal?: AbortSignal): Promise<SavedSyncBatch> {
-  const data = await requestJson(base, `/api/saved-sync/tasks/${encodeURIComponent(taskId.trim())}`, { timeoutMs: 15_000, signal })
-  return toSyncBatch(data)
-}
-
-function toSyncBatch(data: unknown): SavedSyncBatch {
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return {
-    task_id: str(row.task_id),
-    items: (Array.isArray(row.items) ? row.items as Array<Record<string, unknown>> : []).map(toSyncItem),
-  }
-}
-
 /** POST /api/saved/{listKind} — add one membership. */
 export async function saveItem(
   base: string,
   listKind: 'favorite' | 'watch_later',
-  payload: { source_platform: string; content_id: string; content_url?: string; content_type?: string; title?: string; author_name?: string; cover_url?: string },
+  payload: { article_id: string; media?: string; original_url?: string; title?: string; author_name?: string; cover_url?: string },
   signal?: AbortSignal,
 ): Promise<void> {
-  await requestJson(base, `/api/saved/${listKind}`, { method: 'POST', body: { ...payload }, timeoutMs: 10_000, signal })
+  await requestJson(base, `/api/saved/${listKind}`, {
+    method: 'POST',
+    body: { ...payload, content_type: 'article' },
+    timeoutMs: 10_000,
+    signal,
+  })
 }
 
 /** POST /api/saved/{listKind}/remove — remove one membership. */
@@ -922,14 +865,63 @@ export async function fetchRuntimeStatus(base: string, signal?: AbortSignal): Pr
   }
 }
 
-/** GET /api/health — reachability probe. */
-export async function fetchHealth(base: string, signal?: AbortSignal): Promise<boolean> {
+/** Three-state backend status shared by the DSH, Web and mobile clients. */
+export type HealthState = 'online' | 'degraded' | 'offline'
+
+/** GET /api/health — reachability plus partial-source degradation. */
+export async function fetchHealthState(base: string, signal?: AbortSignal): Promise<HealthState> {
   try {
     const data = await requestJson(base, '/api/health', { timeoutMs: 5_000, signal })
-    return typeof data === 'object' && data !== null && (data as Record<string, unknown>).status === 'ok'
+    if (typeof data !== 'object' || data === null) return 'degraded'
+    const row = data as Record<string, unknown>
+    const state = str(row.state || row.status).toLowerCase()
+    if (state === 'offline') return 'offline'
+    if (state === 'degraded' || state === 'partial' || state === 'error' || state === 'failed' || row.degraded === true || row.ok === false) return 'degraded'
+    const sources = row.sources ?? row.source_health
+    const sourceRows = Array.isArray(sources)
+      ? sources
+      : typeof sources === 'object' && sources !== null ? Object.values(sources) : []
+    if (sourceRows.some(source => {
+      if (typeof source !== 'object' || source === null) return false
+      const sourceState = str((source as Record<string, unknown>).state || (source as Record<string, unknown>).status).toLowerCase()
+      return sourceState === 'degraded' || sourceState === 'offline' || sourceState === 'error' || sourceState === 'failed'
+    })) return 'degraded'
+    return 'online'
   } catch {
-    return false
+    return 'offline'
   }
+}
+
+/** Read source health through the same versioned Agent Bridge as DSH tools. */
+export async function fetchSourceAvailability(base: string, signal?: AbortSignal): Promise<SourceAvailability[]> {
+  const reply = await requestJson(base, '/api/agent-bridge', {
+    method: 'POST',
+    body: { command: 'source-availability', argv: [] },
+    timeoutMs: 10_000,
+    signal,
+  })
+  const root = typeof reply === 'object' && reply !== null ? reply as Record<string, unknown> : {}
+  if (root.ok !== true) throw new Error(firstText(root.error, root.message, '新闻源状态读取失败'))
+  const data = root.data
+  const dataRow = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  const rawItems = Array.isArray(data)
+    ? data
+    : Array.isArray(dataRow.items) ? dataRow.items
+      : Array.isArray(dataRow.sources) ? dataRow.sources
+        : Object.entries(dataRow).map(([id, value]) => ({ id, ...((typeof value === 'object' && value !== null) ? value as Record<string, unknown> : {}) }))
+  return rawItems.map(value => {
+    const row = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+    const rawState = firstText(row.state, row.status, row.health).toLowerCase()
+    const state: SourceAvailability['state'] = rawState === 'online' || rawState === 'degraded' || rawState === 'offline' ? rawState : 'unknown'
+    return {
+      id: firstText(row.id, row.source_id, row.media),
+      media: firstText(row.media, row.name, row.id),
+      technical_provider: firstText(row.technical_provider, row.provider),
+      state,
+      last_success_at: firstText(row.last_success_at, row.last_success),
+      error: firstText(row.error, row.last_error),
+    }
+  }).filter(item => item.id !== '' || item.media !== '')
 }
 
 /** GET /api/profile-summary — the AI profile summary (canonical surface shape). */
@@ -987,7 +979,7 @@ export async function fetchProfileSummary(
       motivational_drivers: Array.isArray(row.motivational_drivers) ? row.motivational_drivers.map(String) : [],
       likes: Array.isArray(row.likes) ? row.likes.map(toDomain) : [],
       dislikes: Array.isArray(row.dislikes) ? row.dislikes.map(toDomain) : [],
-      favorite_up_users: Array.isArray(row.favorite_up_users) ? row.favorite_up_users.map(String) : [],
+      favorite_sources: Array.isArray(row.favorite_sources) ? row.favorite_sources.map(String) : [],
       life_stage: str(row.life_stage),
       current_phase: str(row.current_phase),
       cognitive_style: Array.isArray(row.cognitive_style) ? row.cognitive_style.map(String) : [],
@@ -1085,125 +1077,10 @@ export function stableId(): string {
 
 // ── settings-page endpoints (mirror the popup's config surface) ──────────
 
-/** Result of one no-write connectivity probe (`POST /api/config/probe-service`). */
-export interface ProbeResult {
-  ok: boolean
-  provider: string
-  model: string
-  message: string
-  error: string
-  latencyMs: number
-}
-
-/** One v2 LLM instance row as exchanged with `/api/config`. */
-export interface LlmInstance {
-  name: string
-  provider_type: string
-  enabled: boolean
-  api_key: string
-  model: string
-  base_url: string
-  auth_mode: string
-  api_flavor: string
-  http_referer: string
-  x_title: string
-  reasoning_effort: string
-  num_ctx: number
-}
-
-/** `/api/config/discover-models` response. */
-export interface ModelDiscoveryResult {
-  ok: boolean
-  models: string[]
-  reasoningEfforts: string[]
-  error: string
-}
-
 /** `/api/init-status` response (defensive). */
 export interface InitStatus {
   initialized: boolean
   running: boolean
-}
-
-/** `/api/update-status` response (defensive). */
-export interface UpdateStatus {
-  current_version: string
-  latest_version: string
-  latest_tag: string
-  state: string
-  reason: string
-  last_check_at: string
-  error: string
-  install_mode: string
-}
-
-/** Probe submitted LLM/embedding/proxy settings without saving config.toml. */
-export async function probeConfigService(
-  base: string,
-  kind: 'llm' | 'llm_instance' | 'llm_chain' | 'embedding' | 'network_proxy',
-  config: Record<string, unknown>,
-  instanceId = '',
-  signal?: AbortSignal,
-): Promise<ProbeResult> {
-  const data = await requestJson(base, '/api/config/probe-service', {
-    method: 'POST',
-    timeoutMs: 60_000,
-    signal,
-    body: { kind, instance_id: instanceId, config },
-  })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return {
-    ok: row.ok === true,
-    provider: str(row.provider),
-    model: str(row.model),
-    message: str(row.message),
-    error: str(row.error),
-    latencyMs: num(row.latency_ms),
-  }
-}
-
-/** List models for one submitted instance without saving config.toml. */
-export async function discoverConfigModels(
-  base: string,
-  instanceId: string,
-  config: Record<string, unknown>,
-  signal?: AbortSignal,
-): Promise<ModelDiscoveryResult> {
-  const data = await requestJson(base, '/api/config/discover-models', {
-    method: 'POST',
-    timeoutMs: 60_000,
-    signal,
-    body: { instance_id: instanceId, config },
-  })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  const models = Array.isArray(row.models) ? row.models.map(item => String(item)) : []
-  const reasoningEfforts = Array.isArray(row.reasoning_efforts) ? row.reasoning_efforts.map(item => String(item)) : []
-  return {
-    ok: row.ok === true,
-    models,
-    reasoningEfforts,
-    error: str(row.error),
-  }
-}
-
-/** Read the LAN password-gate status. */
-export async function fetchAuthStatus(base: string, signal?: AbortSignal): Promise<{ enabled: boolean }> {
-  const data = await requestJson(base, '/api/auth/status', { timeoutMs: 10_000, signal })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return { enabled: row.enabled === true }
-}
-
-/** Enable/disable the LAN password gate (local-only admin surface). */
-export async function setLanAuth(base: string, enabled: boolean, password: string, signal?: AbortSignal): Promise<boolean> {
-  const data = await requestJson(base, '/api/auth/admin', {
-    method: 'POST',
-    timeoutMs: 15_000,
-    signal,
-    headers: { 'X-OBC-Auth': '1' },
-    body: enabled ? { enabled: true, password } : { enabled: false },
-  })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return row.ok === true
 }
 
 /** Read boot-autostart state. */
@@ -1219,7 +1096,7 @@ export async function applyAutostart(base: string, enabled: boolean, signal?: Ab
     method: 'POST',
     timeoutMs: 15_000,
     signal,
-    headers: { 'X-OBC-Auth': '1' },
+    headers: { 'X-NewsClaw-Auth': '1' },
     body: { enabled: Boolean(enabled) },
   })
   const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
@@ -1236,48 +1113,4 @@ export async function fetchInitStatus(base: string, signal?: AbortSignal): Promi
 /** Restart initialization (rebuild profile + discovery pool). */
 export async function startInit(base: string, payload: { force?: boolean; reset_cognition?: boolean }, signal?: AbortSignal): Promise<void> {
   await requestJson(base, '/api/init', { method: 'POST', timeoutMs: 60_000, signal, body: payload })
-}
-
-/** Read backend update status. */
-export async function fetchUpdateStatus(base: string, signal?: AbortSignal): Promise<UpdateStatus> {
-  const asDict = (value: unknown): Record<string, unknown> => typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
-  const data = await requestJson(base, '/api/update-status', { timeoutMs: 10_000, signal })
-  const root = asDict(data)
-  const row = Object.keys(asDict(root.backend)).length > 0 ? asDict(root.backend) : root
-  return {
-    current_version: str(row.current_version),
-    latest_version: str(row.latest_version),
-    latest_tag: str(row.latest_tag),
-    state: str(row.state),
-    reason: str(row.reason),
-    last_check_at: str(row.last_check_at),
-    error: str(row.last_error),
-    install_mode: str(row.install_mode),
-  }
-}
-
-/** Trigger an immediate backend update check. */
-export async function checkBackendUpdate(base: string, signal?: AbortSignal): Promise<unknown> {
-  return requestJson(base, '/api/update/check', {
-    method: 'POST', timeoutMs: 60_000, signal, body: { include_backend: true },
-  })
-}
-
-/** Start applying a backend update (backend restarts afterwards). */
-export async function applyBackendUpdate(base: string, tag: string, signal?: AbortSignal): Promise<unknown> {
-  return requestJson(base, '/api/update/apply', {
-    method: 'POST', timeoutMs: 60_000, signal, body: { target: 'backend', tag },
-  })
-}
-
-/** GET /api/project-stats — the project summary used by the GitHub star prompt. */
-export async function fetchProjectStats(base: string, signal?: AbortSignal): Promise<{ githubStars: number }> {
-  try {
-    const data = await requestJson(base, '/api/project-stats', { timeoutMs: 6000, signal })
-    const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-    const n = Number(row.github_stars)
-    return { githubStars: Number.isFinite(n) ? n : 0 }
-  } catch {
-    return { githubStars: 0 }
-  }
 }

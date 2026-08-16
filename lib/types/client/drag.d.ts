@@ -3,7 +3,7 @@
  * pointer-down handler owns capture, a rAF-flushed move loop, every end path
  * (up / cancel / blur / lost buttons), and the drag styles. Pure DOM — no
  * React — mirroring dsh-aionui-panel's drag core.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 export interface DragStartOptions {
     /** Drag left = grow (the handle sits on the panel's left edge). */

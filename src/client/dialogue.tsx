@@ -3,7 +3,7 @@
  * (待聊确认), hypothesis cards with optimistic four-state actions
  * (准/不准/聊聊/稍后) and state labels, the 聊聊 → dialogue-context flow
  * (subsequent messages reply to the card), and durable chat turns.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
@@ -27,7 +27,7 @@ interface ContextSel {
   interpretation?: string
 }
 
-const CONTEXT_KEY = 'openbiliclaw.dialogue-context'
+const CONTEXT_KEY = 'newsclaw.dialogue-context'
 
 function readContext(): ContextSel | null {
   try {
@@ -182,7 +182,7 @@ function CardTurnBlock(props: {
 
   return (
     <div className={css.dialogueCard} data-card-state={state}>
-      <div className={css.dialogueKicker}>阿B 的猜测</div>
+      <div className={css.dialogueKicker}>新闻爪的猜测</div>
       <div className={css.dialogueTitle}>{title}</div>
       {evidence.length > 0 ? (
         <details className={css.dialogueEvidence}>
@@ -357,7 +357,7 @@ export function ChatView(props: { base: string }): React.JSX.Element {
       ) : null}
       <div ref={scrollRef} style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0, flex: 1 }}>
         {plainTurns !== null && plainTurns.length === 0 && activeCardTurns.length === 0
-          ? <EmptyState text="还没有对话。聊聊你最近在看什么、对什么好奇，OpenBiliClaw 会边聊边更新你的画像。" />
+          ? <EmptyState text="还没有对话。聊聊你最近在看什么、对什么好奇，NewsClaw 会边聊边更新你的画像。" />
           : null}
         {handledCardCount > 0 ? <div className={css.hint} style={{ textAlign: 'center' }}>已处理 {handledCardCount} 张确认卡</div> : null}
         {questionTurns.map(turn => {
@@ -389,7 +389,7 @@ export function ChatView(props: { base: string }): React.JSX.Element {
           <div className={css.turn} key={turn.turn_id}>
             {quote !== null ? (
               <div className={css.replyQuote}>
-                <span>回复 阿B 的猜测</span>
+                <span>回复新闻爪的猜测</span>
                 <strong title={quote.title}>{quote.title}</strong>
               </div>
             ) : null}
@@ -405,7 +405,7 @@ export function ChatView(props: { base: string }): React.JSX.Element {
       {context !== null ? (
         <div className={css.contextBar} role="status">
           <div className={css.contextBarHead}>
-            <span className={css.contextLabel}>{context.kind === 'confusion' ? '正在回复 有点疑惑' : '正在回复 阿B 的猜测'}</span>
+            <span className={css.contextLabel}>{context.kind === 'confusion' ? '正在回复“有点疑惑”' : '正在回复新闻爪的猜测'}</span>
             <button type="button" className={css.contextClear} onClick={() => setContext(null)}>清除</button>
           </div>
           <strong className={css.contextTitle} title={context.title}>{context.title}</strong>

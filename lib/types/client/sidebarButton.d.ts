@@ -1,5 +1,5 @@
 /** Composed props: the sidebar's `wide` owner share + the injected toggle. */
-export type OpenBiliClawSidebarButtonProps = {
+export type NewsClawSidebarButtonProps = {
     wide: boolean;
     togglePanel: () => void;
 };
@@ -8,5 +8,5 @@ export type OpenBiliClawSidebarButtonProps = {
  * @param props - `wide` (column display state) + `togglePanel` callback.
  * @returns the trigger button.
  */
-export declare function OpenBiliClawSidebarButton({ wide, togglePanel }: OpenBiliClawSidebarButtonProps): React.JSX.Element;
+export declare function NewsClawSidebarButton({ wide, togglePanel }: NewsClawSidebarButtonProps): React.JSX.Element;
 //# sourceMappingURL=sidebarButton.d.ts.map

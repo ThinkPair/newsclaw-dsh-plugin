@@ -1,10 +1,10 @@
 /**
- * Framework-free state for the OpenBiliClaw panel column. The panel is
+ * Framework-free state for the NewsClaw panel column. The panel is
  * DOM-mounted outside any DSH slot (the official layout has no `aside`), so
  * its open/closed state and width live here — a minimal subscribe/getSnapshot/
- * update primitive — instead of the layout service. Width is fixed for now;
- * the open state persists across reloads.
- * @module @openbiliclaw/dsh-plugin
+ * update primitive — instead of the layout service. Width and open state
+ * persist across reloads.
+ * @module @newsclaw/dsh-plugin
  */
 /** A minimal external store usable with useSyncExternalStore. */
 export interface StateHandle<S> {

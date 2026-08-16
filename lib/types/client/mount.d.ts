@@ -5,7 +5,7 @@ export interface PanelThemeFace {
     onThemeChange: (listener: (dark: boolean) => void) => () => void;
 }
 /**
- * Mount the OpenBiliClaw panel into the appended column.
+ * Mount the NewsClaw panel into the appended column.
  * @param controller - the layout controller (owns open/close).
  * @param theme - the shell theme face.
  * @returns a disposer unmounting the tree.

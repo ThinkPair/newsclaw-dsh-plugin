@@ -1,5 +1,5 @@
 /**
- * DOM layout controller for the OpenBiliClaw panel column.
+ * DOM layout controller for the NewsClaw panel column.
  *
  * The official DSH frame is a three-column grid (`sidebar | center | details`);
  * there is no root-scoped `aside` slot and `ctx.layout` has no aside verbs, so
@@ -13,11 +13,11 @@
  *
  * Collapsing keeps the column mounted at width 0. Failure policy: DOM wiring
  * errors are logged, never thrown — a plugin apply throw fails the whole GUI.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { StateHandle } from './store.ts';
 /** The column element marker (mount.tsx targets it). */
-export declare const PANEL_COL_SELECTOR = "[data-obc-panel-col]";
+export declare const PANEL_COL_SELECTOR = "[data-newsclaw-panel-col]";
 /** Parse an inline grid-template-columns string into its tracks (paren-safe). */
 export declare function parseGridTracks(input: string): string[];
 /** Extract a px width from one track (0 for fr/minmax/non-px tracks). */

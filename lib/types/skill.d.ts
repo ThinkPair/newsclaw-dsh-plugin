@@ -1,10 +1,10 @@
 /**
- * Registers the repository's canonical openbiliclaw-adapter skill into the
+ * Registers the repository's canonical newsclaw-adapter skill into the
  * DSH skill registry, so the model can load it through the `skill` tool and
- * operate OpenBiliClaw in a closed loop (the same SKILL.md OpenClaw/Hermes
- * consume). The file is read at plugin activation from the checkout path;
+ * operate NewsClaw in a closed loop. The file is read at plugin activation
+ * from the bundled package path or an explicit development override;
  * when unreadable the plugin logs a warning and continues without it.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import type { SkillRegistration } from '@deepseek-ai/dsh-skill';
 /** The skill's frontmatter keys we map onto SkillRegistration fields. */

@@ -1,7 +1,7 @@
 /**
  * Inline SVG icon set — the same stroke-icon language as the extension popup
  * and mobile web tab bar.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 interface IconProps {
     size?: number;
@@ -26,13 +26,11 @@ export declare function CloseIcon({ size }: IconProps): React.JSX.Element;
 export declare function SearchIcon({ size }: IconProps): React.JSX.Element;
 /** 外部链接 icon. */
 export declare function ExternalIcon({ size }: IconProps): React.JSX.Element;
-/** 稍后再看 clock icon. */
+/** 稍后读 clock icon. */
 export declare function ClockIcon({ size }: IconProps): React.JSX.Element;
 /** 收藏 star icon. */
 export declare function StarIcon({ size }: IconProps): React.JSX.Element;
 /** 电脑版 web 入口 icon — the popup's monitor (web) button. */
 export declare function MonitorIcon({ size }: IconProps): React.JSX.Element;
-/** GitHub star mark — the popup's gh-star-mark (filled). */
-export declare function GithubStarIcon({ size }: IconProps): React.JSX.Element;
 export {};
 //# sourceMappingURL=icons.d.ts.map

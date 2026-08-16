@@ -3,11 +3,11 @@
  * summary, layer headers (Core/Values/Interest/Role/Surface), group cards
  * with chips / MBTI bars / interest trees / style bars, speculative probes,
  * insight cards with confidence bars, and the awareness list.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  fetchProfileSummary, respondAvoidanceProbe, respondInterestProbe,
+  fetchProfileSummary, respondAvoidanceProbe, respondInterestProbe, stableId,
   type CognitionUpdate, type ProfileSummary,
 } from './api.ts'
 import { ActionButton, EmptyState, ErrorNote, formatTime } from './views.tsx'
@@ -136,18 +136,20 @@ function ProbeCard(props: {
 }): React.JSX.Element {
   const { base, kind, domain, reason, confidence, onAnswered, onError } = props
   const [busy, setBusy] = useState('')
+  const [requestIds] = useState(() => ({ confirm: stableId(), reject: stableId(), defer: stableId() }))
   const answer = useCallback(async (response: string) => {
     setBusy(response)
     try {
-      if (kind === 'interest') await respondInterestProbe(base, { domain, response })
-      else await respondAvoidanceProbe(base, { domain, response })
+      const request_id = requestIds[response as keyof typeof requestIds] ?? stableId()
+      if (kind === 'interest') await respondInterestProbe(base, { domain, response, request_id })
+      else await respondAvoidanceProbe(base, { domain, response, request_id })
       onAnswered()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy('')
     }
-  }, [base, domain, kind, onAnswered, onError])
+  }, [base, domain, kind, onAnswered, onError, requestIds])
 
   return (
     <div className={css.probe} data-tone={kind}>
@@ -178,7 +180,7 @@ function CognitionCard(props: { item: CognitionUpdate }): React.JSX.Element {
         disabled={!expandable}
         onClick={() => setOpen(v => !v)}
       >
-        <span className={css.cognitionSummary}>{item.summary !== '' ? item.summary : '阿B 更新了一条认知'}</span>
+        <span className={css.cognitionSummary}>{item.summary !== '' ? item.summary : '新闻爪更新了一条认知'}</span>
         {item.context_line !== '' ? <span className={css.cognitionContext}>{item.context_line}</span> : null}
         <span className={css.cognitionMeta}>
           {item.source_label !== '' ? <span className={css.cognitionSource}>{item.source_label}</span> : null}
@@ -281,12 +283,12 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
             {profile.motivational_drivers.length > 0 ? <Group title="内在驱动力"><Chips chips={profile.motivational_drivers} /></Group> : null}
           </>
         ) : null}
-        {profile.likes.length > 0 || profile.dislikes.length > 0 || profile.favorite_up_users.length > 0 ? (
+        {profile.likes.length > 0 || profile.dislikes.length > 0 || profile.favorite_sources.length > 0 ? (
           <>
             <Layer label="Interest — 你最近在看什么" />
             {profile.likes.length > 0 ? <Group title="感兴趣的方向"><InterestTree label="喜欢" tone="sky" domains={profile.likes} /></Group> : null}
             {profile.dislikes.length > 0 ? <Group title="明显会避开"><InterestTree label="不喜欢" tone="danger" domains={profile.dislikes} /></Group> : null}
-            {profile.favorite_up_users.length > 0 ? <Group title="常看的 UP 主"><Chips chips={profile.favorite_up_users} tone="brand" /></Group> : null}
+            {profile.favorite_sources.length > 0 ? <Group title="常看的 UP 主"><Chips chips={profile.favorite_sources} tone="brand" /></Group> : null}
           </>
         ) : null}
         {profile.life_stage !== '' || profile.current_phase !== '' ? (
@@ -344,7 +346,7 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
         ) : null}
         {cognition.items.length > 0 ? (
           <>
-            <Layer label="阿B 最近新记住了什么" />
+            <Layer label="新闻爪最近新记住了什么" />
             {cognition.items.map(item => (
               <CognitionCard key={`${item.created_at}:${item.summary}`} item={item} />
             ))}

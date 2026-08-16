@@ -1,11 +1,11 @@
 /**
- * Agent-bridge tool set: one DSH tool per OpenBiliClaw capability, mirroring
- * the openbiliclaw-adapter skill names so the agent can operate the
- * consumption loop (recommend → delight → probes → chat → save → feedback)
- * without raw shell access. Durable write tools (feedback, delight respond,
+ * Agent-bridge tool set: one DSH tool per NewsClaw capability, mirroring
+ * the newsclaw-adapter skill names so the agent can operate the
+ * consumption loop (recommend → spotlight → probes → chat → save → feedback)
+ * without raw shell access. Durable write tools (feedback, spotlight respond,
  * probes respond) REQUIRE the caller to supply a stable `requestId` and reuse
  * it for retries of the same action — never across different actions.
- * @module @openbiliclaw/dsh-plugin
+ * @module @newsclaw/dsh-plugin
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -43,7 +43,7 @@ function bool(description: string, required = false): { type: 'boolean'; descrip
 /** Reject empty-string params that a CLI flag would otherwise swallow. */
 function nonEmpty(value: unknown, label: string): string {
   const text = typeof value === 'string' ? value.trim() : ''
-  if (text === '') throw new Error(`openbiliclaw: ${label} is required`)
+  if (text === '') throw new Error(`newsclaw: ${label} is required`)
   return text
 }
 
@@ -57,8 +57,8 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
   const register = (definition: unknown): (() => void) => ctx.tools.register(definition)
   return [
     register(defineTool({
-      name: 'openbiliclaw_get_capabilities',
-      description: 'Negotiate the OpenBiliClaw agent bridge: protocol version, adapter version and the authoritative skill name list. Run this first when the backend may have upgraded.',
+      name: 'newsclaw_get_capabilities',
+      description: 'Negotiate the NewsClaw agent bridge: protocol version, adapter version and the authoritative skill name list. Run this first when the backend may have upgraded.',
       parameters: {},
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
@@ -67,12 +67,12 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_recommend',
-      description: 'Fetch a page of multi-source content recommendations. Serves precomputed pool copy (fast) by default; set realtime:true to generate fresh per-item LLM expressions at request time (slow). Does not trigger a runtime refresh unless refreshIfNeeded is set. Returns cards with item_key/content_id/source_platform plus bvid/up_name compatibility fields.',
+      name: 'newsclaw_recommend',
+      description: 'Fetch a page of personalized news recommendations. Each card identifies its article, media, technical provider, body level, original URL, recommendation reason, impact chain and observation points. Title-only items must stay marked as title-level information.',
       parameters: {
         limit: int('How many recommendations to return (default 5).', false),
-        sourcePlatform: str('Optional canonical platform scope: bilibili, xiaohongshu, douyin, youtube, x (twitter), zhihu, weibo, reddit, linuxdo, v2ex. Empty = all platforms.', false),
-        excludeItemId: str('Optional item_key (or bvid) to exclude from this page.', false),
+        media: str('Optional media scope, for example 财联社、第一财经 or 央视新闻. Empty = all enabled media.', false),
+        excludeArticleId: str('Optional article_id to exclude from this page.', false),
         refreshIfNeeded: bool('When true, run a heavier freshness check before the recommendation fetch. Only use when the user explicitly wants it.', false),
         realtime: bool('When true, generate fresh per-item LLM expressions at request time (slow). Default false = serve precomputed pool copy (fast).', false),
       },
@@ -82,8 +82,8 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
         const argv: string[] = []
         const limit = typeof args.limit === 'number' ? args.limit : 5
         argv.push('--limit', String(Math.max(1, Math.min(50, Math.floor(limit)))))
-        if (typeof args.sourcePlatform === 'string' && args.sourcePlatform.trim() !== '') argv.push('--source-platform', args.sourcePlatform.trim())
-        if (typeof args.excludeItemId === 'string' && args.excludeItemId.trim() !== '') argv.push('--exclude-item-id', args.excludeItemId.trim())
+        if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
+        if (typeof args.excludeArticleId === 'string' && args.excludeArticleId.trim() !== '') argv.push('--exclude-article-id', args.excludeArticleId.trim())
         if (args.refreshIfNeeded === true) argv.push('--refresh-if-needed')
         if (args.realtime === true) argv.push('--realtime')
         return bridge.run('recommend', argv)
@@ -91,31 +91,31 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_reshuffle',
-      description: 'Replace the current recommendation page with a fresh one (same pool, new draw). Optional platform scope and visible-card exclusions.',
+      name: 'newsclaw_reshuffle',
+      description: 'Replace the current news page with a fresh draw from the same personalized pool. Optional media scope and visible article exclusions.',
       parameters: {
-        sourcePlatform: str('Optional canonical platform scope (bilibili, xiaohongshu, ...). Empty = all.', false),
-        excludedBvids: str('Optional comma-separated item_keys/bvids to exclude from the new page.', false),
+        media: str('Optional media scope. Empty = all enabled media.', false),
+        excludedArticleIds: str('Optional comma-separated article_ids to exclude from the new page.', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const argv: string[] = []
-        if (typeof args.sourcePlatform === 'string' && args.sourcePlatform.trim() !== '') argv.push('--source-platform', args.sourcePlatform.trim())
-        if (typeof args.excludedBvids === 'string' && args.excludedBvids.trim() !== '') {
-          for (const id of args.excludedBvids.split(',').map(s => s.trim()).filter(Boolean)) argv.push('--exclude-item-id', id)
+        if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
+        if (typeof args.excludedArticleIds === 'string' && args.excludedArticleIds.trim() !== '') {
+          for (const id of args.excludedArticleIds.split(',').map(s => s.trim()).filter(Boolean)) argv.push('--exclude-article-id', id)
         }
         return bridge.run('reshuffle', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_append_recommendations',
+      name: 'newsclaw_append_recommendations',
       description: 'Append another recommendation page after the current one (scroll-to-load pattern).',
       parameters: {
         limit: int('How many recommendations to append (default 5).', false),
-        sourcePlatform: str('Optional canonical platform scope. Empty = all.', false),
-        excludedBvids: str('Optional comma-separated item_keys/bvids to exclude.', false),
+        media: str('Optional media scope. Empty = all enabled media.', false),
+        excludedArticleIds: str('Optional comma-separated article_ids to exclude.', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
@@ -123,20 +123,20 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
         const argv: string[] = []
         const limit = typeof args.limit === 'number' ? args.limit : 5
         argv.push('--limit', String(Math.max(1, Math.min(50, Math.floor(limit)))))
-        if (typeof args.sourcePlatform === 'string' && args.sourcePlatform.trim() !== '') argv.push('--source-platform', args.sourcePlatform.trim())
-        if (typeof args.excludedBvids === 'string' && args.excludedBvids.trim() !== '') {
-          for (const id of args.excludedBvids.split(',').map(s => s.trim()).filter(Boolean)) argv.push('--exclude-item-id', id)
+        if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
+        if (typeof args.excludedArticleIds === 'string' && args.excludedArticleIds.trim() !== '') {
+          for (const id of args.excludedArticleIds.split(',').map(s => s.trim()).filter(Boolean)) argv.push('--exclude-article-id', id)
         }
         return bridge.run('append', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_submit_feedback',
-      description: 'Submit explicit feedback on one recommendation card (like/dislike/comment/dismiss/...). REQUIRES a stable requestId: reuse it only when retrying this exact same action; never reuse it for a different recommendation, type or note. For comment feedback always include a note.',
+      name: 'newsclaw_submit_feedback',
+      description: 'Submit one explicit news-learning signal (open, like, dislike, ignore, watch_later, favorite or comment). REQUIRES a stable requestId: reuse it only when retrying this exact same action.',
       parameters: {
         recommendationId: int('The recommendation card id (the `recommendation_id` field returned by recommend/append).', true),
-        feedbackType: str('Feedback kind, e.g. like, dislike, comment, dismiss.', true),
+        feedbackType: str('One of: open, like, dislike, ignore, watch_later, favorite, comment.', true),
         requestId: str('Stable idempotency key for THIS action (max 400 chars). Reuse on retries of the same action only.', true),
         note: str('Optional note; required for comment feedback.', false),
       },
@@ -144,7 +144,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const recommendationId = typeof args.recommendationId === 'number' ? Math.floor(args.recommendationId) : NaN
-        if (!Number.isFinite(recommendationId)) throw new Error('openbiliclaw: recommendationId is required')
+        if (!Number.isFinite(recommendationId)) throw new Error('newsclaw: recommendationId is required')
         const feedbackType = nonEmpty(args.feedbackType, 'feedbackType')
         const requestId = nonEmpty(args.requestId, 'requestId')
         const argv = ['--recommendation-id', String(recommendationId), '--feedback-type', feedbackType, '--request-id', requestId]
@@ -154,23 +154,22 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_delight',
-      description: 'Fetch the current proactive surprise-recommendation card (delight candidate) with its delight_reason, delight_score and delight_hook, or null when none is pending.',
+      name: 'newsclaw_get_spotlight',
+      description: 'Fetch the current proactive surprise-recommendation card (spotlight candidate) with its spotlight_reason, spotlight_score and spotlight_hook, or null when none is pending.',
       parameters: {},
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       isConcurrencySafe: () => true,
-      execute: () => bridge.run('get-delight', []),
+      execute: () => bridge.run('get-spotlight', []),
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_respond_delight',
-      description: 'React to a proactive delight (surprise recommendation) card: view, like, dislike, dismiss or chat. dismiss permanently removes the item from future recommendations (also removes it from regular recommendations); view only marks it seen. REQUIRES a stable requestId reused only for retries of the same action. Identify the card by bvid when Bilibili, otherwise by content_id (+ source_platform).',
+      name: 'newsclaw_respond_spotlight',
+      description: 'React to a proactive surprise-news spotlight: open, like, dislike, ignore or chat. ignore removes it from future recommendations. REQUIRES a stable requestId reused only for retries of the same action.',
       parameters: {
-        bvid: str('The card bvid — use when the card is from Bilibili.', false),
-        contentId: str('The card content_id — use for non-Bilibili cards whose bvid is empty.', false),
-        sourcePlatform: str('Canonical platform when identifying by contentId (bilibili, xiaohongshu, douyin, ...).', false),
-        response: str('One of: view, like, dislike, dismiss, chat.', true),
+        articleId: str('The card article_id.', true),
+        media: str('Optional media name for disambiguation.', false),
+        response: str('One of: open, like, dislike, ignore, chat.', true),
         requestId: str('Stable idempotency key for THIS action (max 400 chars).', true),
         title: str('Optional card title.', false),
         message: str('Message when response is chat.', false),
@@ -178,28 +177,21 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
-        const bvid = typeof args.bvid === 'string' ? args.bvid.trim() : ''
-        const contentId = typeof args.contentId === 'string' ? args.contentId.trim() : ''
-        if (bvid === '' && contentId === '') throw new Error('openbiliclaw: bvid or contentId is required')
+        const articleId = nonEmpty(args.articleId, 'articleId')
         const response = nonEmpty(args.response, 'response')
         const requestId = nonEmpty(args.requestId, 'requestId')
-        const argv: string[] = []
-        if (bvid !== '') {
-          argv.push('--bvid', bvid)
-        } else {
-          argv.push('--content-id', contentId)
-          if (typeof args.sourcePlatform === 'string' && args.sourcePlatform.trim() !== '') argv.push('--source-platform', args.sourcePlatform.trim())
-        }
+        const argv: string[] = ['--article-id', articleId]
+        if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
         argv.push('--response', response, '--request-id', requestId)
         if (typeof args.title === 'string' && args.title.trim() !== '') argv.push('--title', args.title.trim())
         if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
-        return bridge.run('respond-delight', argv)
+        return bridge.run('respond-spotlight', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_runtime_status',
-      description: 'OpenBiliClaw runtime summary: initialized, recommendation count, pool availability, unread count, LLM concurrency, last refresh. Use it to check whether the backend is ready before other calls.',
+      name: 'newsclaw_get_runtime_status',
+      description: 'NewsClaw runtime summary: initialized, recommendation count, pool availability, unread count, LLM concurrency, last refresh. Use it to check whether the backend is ready before other calls.',
       parameters: {},
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
@@ -208,8 +200,8 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_activity_feed',
-      description: 'Recent OpenBiliClaw activity feed (profile updates, delight generation, probes, saves).',
+      name: 'newsclaw_get_activity_feed',
+      description: 'Recent NewsClaw activity feed (profile updates, spotlight generation, probes, saves).',
       parameters: {
         limit: int('How many feed entries (default 10).', false),
       },
@@ -223,21 +215,21 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_platform_availability',
-      description: 'Servable candidate inventory split by source platform: how many more recommendations each platform can still serve.',
+      name: 'newsclaw_get_source_availability',
+      description: 'Read the enabled news-source inventory and health state by media and technical provider, including online/degraded/offline status, last success and current error.',
       parameters: {},
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       isConcurrencySafe: () => true,
-      execute: () => bridge.run('platform-availability', []),
+      execute: () => bridge.run('source-availability', []),
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_chat',
-      description: 'Send one Socratic dialogue turn to the OpenBiliClaw soul engine. The reply probes deeper and the exchange feeds back into the user profile. The user\'s answers here are how the system refines interests/avoidances.',
+      name: 'newsclaw_chat',
+      description: 'Send one Socratic dialogue turn to the NewsClaw soul engine. The reply probes deeper and the exchange feeds back into the user profile. The user\'s answers here are how the system refines interests/avoidances.',
       parameters: {
         message: str('The message to send (user\'s words, relayed verbatim).', true),
-        session: str('Dialogue session name (default openclaw).', false),
+        session: str('Dialogue session name (default dsh).', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
@@ -250,10 +242,10 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_chat_history',
+      name: 'newsclaw_get_chat_history',
       description: 'Read the durable Socratic dialogue history for a session.',
       parameters: {
-        session: str('Dialogue session name (default openclaw).', false),
+        session: str('Dialogue session name (default dsh).', false),
         limit: int('How many turns to read (default 50).', false),
       },
       output: TEXT_OUTPUT,
@@ -269,7 +261,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_next_probe',
+      name: 'newsclaw_next_probe',
       description: 'Get the next speculative interest hypothesis to ask the user about: a ready-to-ask question plus domain/reason/specifics/confidence, or null when nothing is pending. Ask the user the question, then relay their answer with respond_interest_probe.',
       parameters: {},
       output: TEXT_OUTPUT,
@@ -279,11 +271,12 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_respond_interest_probe',
+      name: 'newsclaw_respond_interest_probe',
       description: 'Answer a speculative interest probe: confirm (promote it), reject (30-day cooldown), defer (snooze), or chat (forward to the dialogue engine and return its reply).',
       parameters: {
         domain: str('The probe domain, exactly as returned by next_probe.', true),
         response: str('One of: confirm, reject, defer, chat.', true),
+        requestId: str('Stable idempotency key for THIS response. Reuse only when retrying it.', true),
         message: str('Optional message (used with chat).', false),
       },
       output: TEXT_OUTPUT,
@@ -291,14 +284,15 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       execute: async (args: Record<string, unknown>) => {
         const domain = nonEmpty(args.domain, 'domain')
         const response = nonEmpty(args.response, 'response')
-        const argv = ['--domain', domain, '--response', response]
+        const requestId = nonEmpty(args.requestId, 'requestId')
+        const argv = ['--domain', domain, '--response', response, '--request-id', requestId]
         if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
         return bridge.run('respond-interest-probe', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_next_avoidance_probe',
+      name: 'newsclaw_next_avoidance_probe',
       description: 'Get the next speculative avoidance hypothesis to ask the user about, or null when nothing is pending.',
       parameters: {},
       output: TEXT_OUTPUT,
@@ -308,11 +302,12 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_respond_avoidance_probe',
+      name: 'newsclaw_respond_avoidance_probe',
       description: 'Answer a speculative avoidance probe: confirm (register the avoidance), reject, defer (snooze), or chat (forward to the dialogue engine).',
       parameters: {
         domain: str('The probe domain, exactly as returned by next_avoidance_probe.', true),
         response: str('One of: confirm, reject, defer, chat.', true),
+        requestId: str('Stable idempotency key for THIS response. Reuse only when retrying it.', true),
         message: str('Optional message (used with chat).', false),
       },
       output: TEXT_OUTPUT,
@@ -320,15 +315,16 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       execute: async (args: Record<string, unknown>) => {
         const domain = nonEmpty(args.domain, 'domain')
         const response = nonEmpty(args.response, 'response')
-        const argv = ['--domain', domain, '--response', response]
+        const requestId = nonEmpty(args.requestId, 'requestId')
+        const argv = ['--domain', domain, '--response', response, '--request-id', requestId]
         if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
         return bridge.run('respond-avoidance-probe', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_profile',
-      description: 'The current OpenBiliClaw user profile summary (interests, avoidances, traits). Use it to understand what the user likes before recommending or chatting.',
+      name: 'newsclaw_get_profile',
+      description: 'The current NewsClaw user profile summary (interests, avoidances, traits). Use it to understand what the user likes before recommending or chatting.',
       parameters: {},
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
@@ -337,7 +333,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_get_profile_edit_state',
+      name: 'newsclaw_get_profile_edit_state',
       description: 'The full overlay edit state of the user profile (what the system believes vs. what the user has explicitly confirmed/edited).',
       parameters: {},
       output: TEXT_OUTPUT,
@@ -347,7 +343,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_edit_profile',
+      name: 'newsclaw_edit_profile',
       description: 'Apply one deterministic profile overlay edit. target is an onion field path (e.g. core.core_traits) or an interest polarity (likes/dislikes); op is set/add/remove/reset; parent targets a specific interest domain under likes/dislikes; weight pins a domain weight.',
       parameters: {
         target: str('Field path or polarity (e.g. core.core_traits, likes, dislikes).', true),
@@ -370,45 +366,46 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_save_local',
-      description: 'Save a content item to the local favorite or watch_later list (local SQLite only; never syncs to external accounts). Use only when the user asked to save or bookmark an item.',
+      name: 'newsclaw_save_local',
+      description: 'Save a news article to the local favorite or watch_later list. This never writes to a media account or external service.',
       parameters: {
         listKind: str('Which list: favorite or watch_later.', true),
-        itemKey: str('The item identity (content_id / item_key / bvid).', true),
-        sourcePlatform: str('Canonical platform (bilibili, xiaohongshu, ...). Default bilibili.', false),
+        articleId: str('The article_id.', true),
+        media: str('Optional media name.', false),
         title: str('Optional title.', false),
-        contentUrl: str('Optional canonical content URL.', false),
+        originalUrl: str('Optional original article URL.', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const listKind = nonEmpty(args.listKind, 'listKind')
-        const itemKey = nonEmpty(args.itemKey, 'itemKey')
-        const argv = ['--list-kind', listKind, '--source-platform', typeof args.sourcePlatform === 'string' && args.sourcePlatform.trim() !== '' ? args.sourcePlatform.trim() : 'bilibili', '--content-id', itemKey]
+        const articleId = nonEmpty(args.articleId, 'articleId')
+        const argv = ['--list-kind', listKind, '--article-id', articleId]
+        if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
         if (typeof args.title === 'string' && args.title.trim() !== '') argv.push('--title', args.title.trim())
-        if (typeof args.contentUrl === 'string' && args.contentUrl.trim() !== '') argv.push('--content-url', args.contentUrl.trim())
+        if (typeof args.originalUrl === 'string' && args.originalUrl.trim() !== '') argv.push('--original-url', args.originalUrl.trim())
         return bridge.run('save-local', argv)
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_remove_saved',
+      name: 'newsclaw_remove_saved',
       description: 'Remove one item from the local favorite or watch_later list.',
       parameters: {
         listKind: str('Which list: favorite or watch_later.', true),
-        itemKey: str('The item identity (content_id / item_key / bvid).', true),
+        articleId: str('The article_id.', true),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const listKind = nonEmpty(args.listKind, 'listKind')
-        const itemKey = nonEmpty(args.itemKey, 'itemKey')
-        return bridge.run('remove-saved', ['--list-kind', listKind, '--item-key', itemKey])
+        const articleId = nonEmpty(args.articleId, 'articleId')
+        return bridge.run('remove-saved', ['--list-kind', listKind, '--article-id', articleId])
       },
     })),
 
     register(defineTool({
-      name: 'openbiliclaw_list_saved',
+      name: 'newsclaw_list_saved',
       description: 'List the local favorite or watch_later items.',
       parameters: {
         listKind: str('Which list: favorite or watch_later.', true),

@@ -1,33 +1,23 @@
-/** Canonical platform display names (same map as the popup). */
-export declare function platformLabel(platform: string): string;
+/** Canonical media display names for provider codes. */
+export declare function mediaLabel(media: string): string;
 /** Format a raw count into a compact display number. */
 export declare function formatCount(value: number): string;
-/** Small cover thumbnail with an optional platform corner label. */
+/** Small cover thumbnail with an optional media corner label. */
 export declare function Thumb(props: {
+    base?: string;
     url: string;
     title: string;
     kind?: string;
-    platform?: string;
+    media?: string;
 }): import("react").JSX.Element;
-/** Platform tag + author/time meta row. */
+/** Media tag + publisher/time meta row. */
 export declare function MetaRow(props: {
-    platform: string;
+    media: string;
     author?: string;
     time?: string;
 }): import("react").JSX.Element | null;
 /** Compact timestamp formatter. */
 export declare function formatTime(iso: string): string;
-/** Engagement stats row. */
-export declare function StatsRow(props: {
-    item: {
-        view_count: number;
-        like_count: number;
-        comment_count: number;
-        share_count: number;
-        favorite_count: number;
-        danmaku_count: number;
-    };
-}): import("react").JSX.Element | null;
 /** Small action button. */
 export declare function ActionButton(props: {
     label: string;
@@ -51,9 +41,9 @@ export declare function useActionId(identity: string, action: string): string;
 export declare function openItem(base: string, item: {
     recommendation_id?: number;
     content_id: string;
-    bvid: string;
+    article_id: string;
     content_url: string;
-    source_platform: string;
+    media: string;
     title: string;
 }): void;
 /** Activity footer — popup-style: collapsed line (summary + headline) with a
@@ -62,7 +52,7 @@ export declare function openItem(base: string, item: {
 export declare function ActivityFooter(props: {
     base: string;
 }): React.JSX.Element | null;
-/** 推荐 tab: header + pool status + delight + recommendation cards + activity. */
+/** 推荐 tab: header + pool status + spotlight + recommendation cards + activity. */
 export declare function RecommendView(props: {
     base: string;
     refreshKey: number;
