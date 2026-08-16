@@ -1,0 +1,81 @@
+/**
+ * OpenBiliClaw DeepSeek Harness plugin — node half.
+ *
+ * Registers the agent-bridge tool set (recommend / delight / probes / chat /
+ * profile / saved / feedback — the user-consumption loop) and the canonical
+ * openbiliclaw-adapter skill, so the DSH agent can operate a running
+ * OpenBiliClaw backend in a closed loop. Crawling/source-management features
+ * are intentionally NOT exposed: the bridge's sync-account / sync-saved
+ * commands are absent here.
+ *
+ * Config (row config in cordis.patch.yml; all optional):
+ *   apiUrl         OpenBiliClaw serve-api base URL (default: http://127.0.0.1:8420)
+ *   workdir        OpenBiliClaw checkout dir (config.toml + data live here; default: /Users/white/workspace/OpenBiliClaw)
+ *   skillPath      adapter SKILL.md path (default: <workdir>/skills/openbiliclaw-adapter/SKILL.md)
+ *   timeoutMs      per-command budget in ms (default 300000)
+ * @module @openbiliclaw/dsh-plugin
+ */
+import { readFileSync } from 'node:fs'
+import type { Context } from '@deepseek-ai/cordis'
+import { createBridge, type BridgeConfig } from './bridge.ts'
+import { registerBridgeTools } from './tools.ts'
+import { loadAdapterSkill } from './skill.ts'
+
+/** Plugin id for loader rows. */
+export const name = 'openbiliclaw'
+
+/** Required services: the tool registry, the skill registry, and the shell
+ *  executor (the renamed `bash` seam in newer DSH snapshots). */
+export const inject = ['tools', 'skills']
+
+/** Raw row config (no schema — every field defaults in code). */
+export interface OpenBiliClawRowConfig {
+  apiUrl?: string
+  workdir?: string
+  skillPath?: string
+  timeoutMs?: number
+}
+
+const DEFAULT_WORKDIR = '/Users/white/workspace/OpenBiliClaw'
+
+/** Apply config defaults and normalize paths. */
+function resolveConfig(config: OpenBiliClawRowConfig | undefined): BridgeConfig {
+  const workdir = config?.workdir?.trim() !== '' && config?.workdir !== undefined
+    ? config.workdir
+    : DEFAULT_WORKDIR
+  return {
+    apiUrl: config?.apiUrl?.trim() !== '' && config?.apiUrl !== undefined
+      ? config.apiUrl
+      : 'http://127.0.0.1:8420',
+    workdir,
+    skillPath: config?.skillPath?.trim() !== '' && config?.skillPath !== undefined
+      ? config.skillPath
+      : `${workdir}/skills/openbiliclaw-adapter/SKILL.md`,
+    timeoutMs: typeof config?.timeoutMs === 'number' && config.timeoutMs > 0 ? config.timeoutMs : 300_000,
+  }
+}
+
+/**
+ * Plugin body: wire the bridge tools and the adapter skill.
+ * @param ctx - plugin context.
+ * @param config - raw row config (optional; defaults apply).
+ */
+export function apply(ctx: Context, config?: OpenBiliClawRowConfig): void {
+  const resolved = resolveConfig(config)
+  const bridge = createBridge(resolved)
+  const logger = ctx.logger('openbiliclaw')
+  ctx.effect(() => registerBridgeTools(ctx, bridge), 'openbiliclaw: bridge tools')
+
+  // The adapter skill is read synchronously at activation: the file lives in
+  // the checkout and is the canonical contract the bridge tools implement.
+  let skillText: string | null = null
+  try {
+    skillText = readFileSync(resolved.skillPath, 'utf8')
+  } catch {
+    logger.warn('adapter SKILL.md not found at %s — skill registration skipped', resolved.skillPath)
+  }
+  if (skillText !== null) {
+    const skill = loadAdapterSkill(skillText, resolved.skillPath)
+    ctx.effect(() => ctx.skills.register(skill), 'openbiliclaw: adapter skill')
+  }
+}
