@@ -54,7 +54,10 @@ test('panel is a clamped trailing grid column', () => {
   assert.match(store, /PANEL_MAX_WIDTH_PX\s*=\s*560/)
   assert.match(store, /MIN_CHAT_PX\s*=\s*400/)
   assert.match(layout, /column\.dataset\.newsclawPanelCol\s*=\s*''/)
-  assert.match(layout, /gridTemplateColumns\s*=\s*grid/)
+  assert.match(layout, /gridColumnStart\s*=\s*String\(this\.shellTracks\.length\s*\+\s*1\)/)
+  assert.match(layout, /column\.style\.width\s*=/)
+  assert.doesNotMatch(layout, /frame\.style\.gridTemplateColumns\s*=/)
+  assert.match(layout, /this\.waitObserver\?\.disconnect\(\)/)
   assert.match(layout, /available\s*-\s*MIN_CHAT_PX/)
   assert.match(layout, /maxByContainer\s*<\s*PANEL_MIN_WIDTH_PX\) return 0/)
 })
@@ -75,6 +78,7 @@ test('plugin loading failures are isolated', () => {
   assert.match(clientEntry, /Harness remains usable/)
   assert.match(nodeEntry, /try\s*\{/)
   assert.match(clientEntry, /try\s*\{/)
+  assert.match(clientEntry, /layout\.dispose\(\)/)
 })
 
 test('learning writes are idempotent and credentials are redacted', () => {
@@ -88,6 +92,13 @@ test('learning writes are idempotent and credentials are redacted', () => {
   assert.match(bridge, /sanitizeBridgeValue/)
   assert.match(bridge, /SECRET_KEY/)
   assert.match(bridge, /\[REDACTED\]/)
+})
+
+test('client CSS is upserted on a hot reload', () => {
+  const build = read('tsdown.config.ts')
+  assert.match(build, /const existing = document\.querySelector/)
+  assert.match(build, /if \(tag\.textContent !== css\) tag\.textContent = css/)
+  assert.match(build, /if \(existing === null\) document\.head\.appendChild\(tag\)/)
 })
 
 test('upstream license notices ship with the source package', () => {

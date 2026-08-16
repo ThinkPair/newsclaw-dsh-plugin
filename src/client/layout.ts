@@ -4,12 +4,13 @@
  * The official DSH frame is a three-column grid (`sidebar | center | details`);
  * there is no root-scoped `aside` slot and `ctx.layout` has no aside verbs, so
  * the panel cannot claim a column through the slot system. This controller
- * extends the frame grid directly — the same technique as dsh-aionui-panel:
- * it appends one trailing grid item (the panel column) and re-writes the
- * frame's inline `grid-template-columns` with the shell's own tracks followed
- * by the panel width. A MutationObserver mirrors every shell grid write, so
- * the panel column survives sidebar/details changes; the shell's inline style
- * is always the source of truth (never guessed).
+ * extends the frame grid directly by appending one item in the first implicit
+ * trailing column. Its definite width participates in grid sizing, so the
+ * center `1fr` track shrinks without rewriting the shared
+ * `grid-template-columns`. This matters when OpenBiliClaw or another panel is
+ * also active: competing frame-style observers would otherwise feed each
+ * other's appended tracks forever. A MutationObserver mirrors shell track
+ * changes only onto this item's placement and never writes the observed style.
  *
  * Collapsing keeps the column mounted at width 0. Failure policy: DOM wiring
  * errors are logged, never thrown — a plugin apply throw fails the whole GUI.
@@ -57,7 +58,7 @@ function findFrame(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[class*="sidebarCol"]')?.parentElement ?? null
 }
 
-/** The layout controller: frame sync, column append, grid rewrite, toggle. */
+/** The layout controller: frame sync, implicit trailing column, toggle. */
 export class PanelLayoutController {
   private frame: HTMLElement | null = null
   private column: HTMLDivElement | null = null
@@ -86,6 +87,8 @@ export class PanelLayoutController {
 
   /** Attach to the frame: column, observers, store subscription. */
   private attach(frame: HTMLElement): void {
+    this.waitObserver?.disconnect()
+    this.waitObserver = null
     this.frame = frame
 
     const column = document.createElement('div')
@@ -94,6 +97,7 @@ export class PanelLayoutController {
     column.style.overflow = 'hidden'
     column.style.display = 'flex'
     column.style.flexDirection = 'column'
+    column.style.gridRow = '1'
     column.style.visibility = 'hidden'
     frame.appendChild(column)
     this.column = column
@@ -103,7 +107,9 @@ export class PanelLayoutController {
     frame.appendChild(handle)
     this.handle = handle
 
-    // Mirror every shell grid write: any write that isn't ours re-appends ours.
+    // Mirror shell grid changes onto the implicit column placement. Crucially,
+    // this observer never writes frame.style, so independent side panels cannot
+    // enter a read/append/write feedback loop with one another.
     this.styleObserver = new MutationObserver(() => { this.syncGrid() })
     this.styleObserver.observe(frame, { attributes: true, attributeFilter: ['style'] })
 
@@ -127,26 +133,24 @@ export class PanelLayoutController {
     this.applyGrid()
   }
 
-  /** Re-write the frame grid and toggle the column visibility. */
+  /** Size/place the implicit trailing column and toggle its visibility. */
   private applyGrid(): void {
     if (this.frame === null) return
     if (this.shellTracks.length < 2) return
+    if (this.column === null) return
     const state = this.store.getSnapshot()
     const width = state.open ? this.clampWidth(state.width) : 0
 
-    // Shell tracks: [sidebar, center, details, ...]; center is always the
-    // fluid track, so it is re-stated as minmax(0px, 1fr) (the browser's own
-    // serialization of minmax(0, 1fr)) while every other shell track is
-    // preserved verbatim, then our panel column is appended.
-    const shell = this.shellTracks
-    const grid = `${shell[0]} minmax(0px, 1fr) ${shell.slice(2).join(' ')} ${Math.round(width)}px`.trim()
-    this.frame.style.gridTemplateColumns = grid
-
-    if (this.column !== null) {
-      this.column.style.visibility = width > 0 ? 'visible' : 'hidden'
-    }
+    // Explicit tracks belong to the shell or other plugins. NewsClaw occupies
+    // the first implicit column after them; its definite width participates in
+    // grid sizing and pushes the fluid center without mutating the shared frame.
+    this.column.style.gridColumnStart = String(this.shellTracks.length + 1)
+    this.column.style.width = `${Math.round(width)}px`
+    this.column.style.visibility = width > 0 ? 'visible' : 'hidden'
     if (this.handle !== null) {
-      const left = Math.round(this.frameWidth - width)
+      const frameRect = this.frame.getBoundingClientRect()
+      const columnRect = this.column.getBoundingClientRect()
+      const left = Math.round(columnRect.left - frameRect.left)
       this.handle.style.left = `${left}px`
       this.handle.style.display = width > 0 ? 'block' : 'none'
     }
@@ -195,9 +199,12 @@ export class PanelLayoutController {
 
   /** Clamp the requested width so the chat area keeps at least MIN_CHAT_PX. */
   private clampWidth(requested: number): number {
-    const sidebar = this.shellTracks.length >= 1 ? trackPx(this.shellTracks[0] ?? '') : 0
-    const details = this.shellTracks.length >= 3 ? trackPx(this.shellTracks[2] ?? '') : 0
-    const available = Math.max(0, this.frameWidth - sidebar - details)
+    // Track 1 is the shell's fluid center. Reserve every fixed px track around
+    // it, including columns owned by other independent panel plugins.
+    const fixed = this.shellTracks.reduce((sum, track, index) => (
+      index === 1 ? sum : sum + Math.max(0, trackPx(track))
+    ), 0)
+    const available = Math.max(0, this.frameWidth - fixed)
     const maxByContainer = available - MIN_CHAT_PX
     // Both contracts cannot fit below 680px of usable room. Collapse the
     // panel column until the window grows instead of stealing chat space.
@@ -205,20 +212,12 @@ export class PanelLayoutController {
     return Math.min(PANEL_MAX_WIDTH_PX, maxByContainer, Math.max(PANEL_MIN_WIDTH_PX, requested))
   }
 
-  /**
-   * Mirror shell grid writes. Our own write is the shell's track count plus
-   * one (the panel column), so a write at that count is kept; any other write
-   * is the shell's (or a foreign plugin's), so its tracks are remembered and
-   * our column is re-appended. Track count — not string equality — detects the
-   * two cases, because the browser re-serializes `minmax(0, 1fr)` as
-   * `minmax(0px, 1fr)` and a string comparison would never match.
-   */
+  /** Mirror explicit shell/foreign-panel tracks without writing frame style. */
   private syncGrid(): void {
     if (this.frame === null) return
     const inline = this.frame.style.gridTemplateColumns
     if (inline === '') return
     const tracks = parseGridTracks(inline)
-    if (tracks.length === this.shellTracks.length + 1) return
     if (tracks.length >= 2) {
       this.shellTracks = tracks
       this.applyGrid()

@@ -96,12 +96,13 @@ const clientConfig: UserConfig = {
       return [
         `const css = ${JSON.stringify(code.toString())};`,
         `const tagId = ${JSON.stringify(tagId)};`,
-        `if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {`,
-        `  const tag = document.createElement('style');`,
+        `if (typeof document !== 'undefined') {`,
+        `  const existing = document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']');`,
+        `  const tag = existing ?? document.createElement('style');`,
         `  tag.dataset.plugin = ${JSON.stringify(ID)};`,
         `  tag.dataset.pluginCss = tagId;`,
-        `  tag.textContent = css;`,
-        `  document.head.appendChild(tag);`,
+        `  if (tag.textContent !== css) tag.textContent = css;`,
+        `  if (existing === null) document.head.appendChild(tag);`,
         `}`,
         `export default ${JSON.stringify(classMap)};`,
       ].join('\n')

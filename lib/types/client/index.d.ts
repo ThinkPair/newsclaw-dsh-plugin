@@ -3,11 +3,12 @@
  *
  * The official DSH layout has no root-scoped `aside` slot and `ctx.layout` has
  * no aside verbs, so the panel cannot claim a column through the slot system.
- * Instead this plugin extends the frame grid directly (the dsh-aionui-panel
- * technique): a `PanelLayoutController` appends one trailing grid column and
- * re-writes the frame's `grid-template-columns` with the shell's tracks plus
- * the panel width, so opening the panel PUSHES the center/conversation column
- * instead of overlaying it. The panel React root mounts into that column.
+ * Instead this plugin extends the frame grid directly: a
+ * `PanelLayoutController` appends one item in the first implicit trailing
+ * column and gives it the panel width, so opening the panel PUSHES the
+ * center/conversation column instead of overlaying it. It deliberately never
+ * rewrites the frame's shared `grid-template-columns`, allowing OpenBiliClaw
+ * and other independent side panels to coexist without observer feedback.
  *
  * The only slot registration is the left-sidebar trigger button
  * (`sidebar.footer.action`), which toggles the column. The panel's business
