@@ -86,7 +86,12 @@ const clientConfig: UserConfig = {
         minify: true,
       })
       const classMap: Record<string, string> = {}
-      for (const [local, value] of Object.entries(cssExports ?? {})) classMap[local] = value.name
+      // lightningcss does not guarantee export iteration order. Sort the
+      // class map so two release builds from the same commit are byte-stable
+      // and the frozen-package SHA-256 manifest remains reproducible.
+      for (const [local, value] of Object.entries(cssExports ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+        classMap[local] = value.name
+      }
       const tagId = `${ID}/${basename(file)}`
       return [
         `const css = ${JSON.stringify(code.toString())};`,
