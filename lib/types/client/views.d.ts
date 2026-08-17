@@ -37,7 +37,7 @@ export declare function ErrorNote(props: {
 }): import("react").JSX.Element;
 /** Stable idempotency key per (item identity × action): reuse on retries only. */
 export declare function useActionId(identity: string, action: string): string;
-/** Open a content URL (recording the click first, never blocking the open). */
+/** Open a content URL immediately, then report whether the weak open signal persisted. */
 export declare function openItem(base: string, item: {
     recommendation_id?: number;
     content_id: string;
@@ -45,7 +45,7 @@ export declare function openItem(base: string, item: {
     content_url: string;
     media: string;
     title: string;
-}): void;
+}, onPersistError?: (error: unknown) => void): void;
 /** Activity footer — popup-style: collapsed line (summary + headline) with a
  *  更多/收起 toggle; expanded rows are footer-item cards with a kind pill,
  *  time and summary, plus a dashed load-more button. */

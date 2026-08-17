@@ -48,5 +48,12 @@ export declare function hydrateDrawer(base: string, handledProbes: ReadonlySet<s
     probes: ProbeNotice[];
     spotlights: SpotlightNotice[];
     notifications: RecommendationNotice[];
+    error: string;
+    loaded: {
+        interests: boolean;
+        avoidances: boolean;
+        spotlights: boolean;
+        notification: boolean;
+    };
 }>;
 //# sourceMappingURL=notifications.d.ts.map

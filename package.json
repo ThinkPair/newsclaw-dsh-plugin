@@ -68,6 +68,7 @@
     "lib/types/**/*.d.ts",
     "skills/newsclaw-adapter/SKILL.md",
     "docs/settings-contract.md",
+    "docs/control-closure-matrix.md",
     "docs/CHANGELOG.md",
     "LICENSE",
     "NOTICE",

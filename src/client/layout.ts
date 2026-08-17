@@ -7,7 +7,7 @@
  * extends the frame grid directly by appending one item in the first implicit
  * trailing column. Its definite width participates in grid sizing, so the
  * center `1fr` track shrinks without rewriting the shared
- * `grid-template-columns`. This matters when OpenBiliClaw or another panel is
+ * `grid-template-columns`. This matters when another independent panel is
  * also active: competing frame-style observers would otherwise feed each
  * other's appended tracks forever. A MutationObserver mirrors shell track
  * changes only onto this item's placement and never writes the observed style.

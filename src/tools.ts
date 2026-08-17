@@ -3,8 +3,9 @@
  * the newsclaw-adapter skill names so the agent can operate the
  * consumption loop (recommend → spotlight → probes → chat → save → feedback)
  * without raw shell access. Durable write tools (feedback, spotlight respond,
- * probes respond) REQUIRE the caller to supply a stable `requestId` and reuse
- * it for retries of the same action — never across different actions.
+ * probes respond) REQUIRE the caller to supply a stable `requestId`; durable
+ * chat uses a stable `turnId`. Reuse either identity only for retries of the
+ * same action — never across different actions.
  * @module @newsclaw/dsh-plugin
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -47,6 +48,31 @@ function nonEmpty(value: unknown, label: string): string {
   return text
 }
 
+/** Validate one canonical enum before a request reaches the backend adapter. */
+function oneOf(value: unknown, label: string, allowed: readonly string[]): string {
+  const text = nonEmpty(value, label).toLowerCase()
+  if (!allowed.includes(text)) throw new Error(`newsclaw: ${label} must be one of: ${allowed.join(', ')}`)
+  return text
+}
+
+/** Stable durable-write key: the adapter contract caps it at 400 chars. */
+function stableKey(value: unknown, label: string): string {
+  const text = nonEmpty(value, label)
+  if (text.length > 400) throw new Error(`newsclaw: ${label} must be at most 400 characters`)
+  return text
+}
+
+function requestId(value: unknown): string {
+  return stableKey(value, 'requestId')
+}
+
+/** Recommendation ids are positive database identities, not arbitrary numbers. */
+function positiveInt(value: unknown, label: string): number {
+  const result = typeof value === 'number' ? Math.floor(value) : NaN
+  if (!Number.isFinite(result) || result <= 0) throw new Error(`newsclaw: ${label} must be a positive integer`)
+  return result
+}
+
 /**
  * Register every bridge tool on ctx.tools.
  * @param ctx - plugin context with the tools registry.
@@ -54,7 +80,22 @@ function nonEmpty(value: unknown, label: string): string {
  * @returns array of tool disposers (for effect wiring).
  */
 export function registerBridgeTools(ctx: { tools: { register(def: unknown): () => void } }, bridge: Bridge): Array<() => void> {
-  const register = (definition: unknown): (() => void) => ctx.tools.register(definition)
+  const registered: Array<() => void> = []
+  const register = (definition: unknown): (() => void) => {
+    try {
+      const dispose = ctx.tools.register(definition)
+      registered.push(dispose)
+      return dispose
+    } catch (error) {
+      // Registration must be atomic: a hot-load failure cannot leave a
+      // partial set of stale tools behind for the next loader attempt.
+      for (const dispose of [...registered].reverse()) {
+        try { dispose() } catch { /* preserve the original registration error */ }
+      }
+      registered.length = 0
+      throw error
+    }
+  }
   return [
     register(defineTool({
       name: 'newsclaw_get_capabilities',
@@ -133,22 +174,23 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
 
     register(defineTool({
       name: 'newsclaw_submit_feedback',
-      description: 'Submit one explicit news-learning signal (open, like, dislike, ignore, watch_later, favorite or comment). REQUIRES a stable requestId: reuse it only when retrying this exact same action.',
+      description: 'Submit one explicit news-learning signal (open, like, dislike, comment or dismiss). open is a weak reading signal; local favorite/watch_later membership does not train the profile. REQUIRES a stable requestId: reuse it only when retrying this exact same action.',
       parameters: {
         recommendationId: int('The recommendation card id (the `recommendation_id` field returned by recommend/append).', true),
-        feedbackType: str('One of: open, like, dislike, ignore, watch_later, favorite, comment.', true),
+        feedbackType: str('One of: open, like, dislike, comment, dismiss.', true),
         requestId: str('Stable idempotency key for THIS action (max 400 chars). Reuse on retries of the same action only.', true),
         note: str('Optional note; required for comment feedback.', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
-        const recommendationId = typeof args.recommendationId === 'number' ? Math.floor(args.recommendationId) : NaN
-        if (!Number.isFinite(recommendationId)) throw new Error('newsclaw: recommendationId is required')
-        const feedbackType = nonEmpty(args.feedbackType, 'feedbackType')
-        const requestId = nonEmpty(args.requestId, 'requestId')
-        const argv = ['--recommendation-id', String(recommendationId), '--feedback-type', feedbackType, '--request-id', requestId]
-        if (typeof args.note === 'string' && args.note.trim() !== '') argv.push('--note', args.note.trim())
+        const recommendationId = positiveInt(args.recommendationId, 'recommendationId')
+        const feedbackType = oneOf(args.feedbackType, 'feedbackType', ['open', 'like', 'dislike', 'comment', 'dismiss'])
+        const stableRequestId = requestId(args.requestId)
+        const note = typeof args.note === 'string' ? args.note.trim() : ''
+        if (feedbackType === 'comment' && note === '') throw new Error('newsclaw: note is required for comment feedback')
+        const argv = ['--recommendation-id', String(recommendationId), '--feedback-type', feedbackType, '--request-id', stableRequestId]
+        if (note !== '') argv.push('--note', note)
         return bridge.run('submit-feedback', argv)
       },
     })),
@@ -165,11 +207,11 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
 
     register(defineTool({
       name: 'newsclaw_respond_spotlight',
-      description: 'React to a proactive surprise-news spotlight: open, like, dislike, ignore or chat. ignore removes it from future recommendations. REQUIRES a stable requestId reused only for retries of the same action.',
+      description: 'React to a proactive surprise-news spotlight: view only marks the card seen; open records a weak article-open learning signal; like/dislike learn preference; dismiss removes it; chat starts dialogue. REQUIRES a stable requestId for every learning action; reuse it only for retries of the same action.',
       parameters: {
         articleId: str('The card article_id.', true),
         media: str('Optional media name for disambiguation.', false),
-        response: str('One of: open, like, dislike, ignore, chat.', true),
+        response: str('One of: view, open, like, dislike, dismiss, chat.', true),
         requestId: str('Stable idempotency key for THIS action (max 400 chars).', true),
         title: str('Optional card title.', false),
         message: str('Message when response is chat.', false),
@@ -178,13 +220,15 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const articleId = nonEmpty(args.articleId, 'articleId')
-        const response = nonEmpty(args.response, 'response')
-        const requestId = nonEmpty(args.requestId, 'requestId')
+        const response = oneOf(args.response, 'response', ['view', 'open', 'like', 'dislike', 'dismiss', 'chat'])
+        const stableRequestId = requestId(args.requestId)
+        const message = typeof args.message === 'string' ? args.message.trim() : ''
+        if (response === 'chat' && message === '') throw new Error('newsclaw: message is required for a chat spotlight response')
         const argv: string[] = ['--article-id', articleId]
         if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
-        argv.push('--response', response, '--request-id', requestId)
+        argv.push('--response', response, '--request-id', stableRequestId)
         if (typeof args.title === 'string' && args.title.trim() !== '') argv.push('--title', args.title.trim())
-        if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
+        if (message !== '') argv.push('--message', message)
         return bridge.run('respond-spotlight', argv)
       },
     })),
@@ -226,16 +270,18 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
 
     register(defineTool({
       name: 'newsclaw_chat',
-      description: 'Send one Socratic dialogue turn to the NewsClaw soul engine. The reply probes deeper and the exchange feeds back into the user profile. The user\'s answers here are how the system refines interests/avoidances.',
+      description: 'Send one durable Socratic dialogue turn to the NewsClaw soul engine. The reply probes deeper and the exchange feeds back into the user profile. REQUIRES a stable turnId: reuse it only when retrying this exact turn after a timeout.',
       parameters: {
         message: str('The message to send (user\'s words, relayed verbatim).', true),
+        turnId: str('Stable durable turn identity for THIS message (max 400 chars). Reuse on an exact retry only.', true),
         session: str('Dialogue session name (default dsh).', false),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const message = nonEmpty(args.message, 'message')
-        const argv = ['--message', message]
+        const turnId = stableKey(args.turnId, 'turnId')
+        const argv = ['--message', message, '--turn-id', turnId]
         if (typeof args.session === 'string' && args.session.trim() !== '') argv.push('--session', args.session.trim())
         return bridge.run('chat', argv)
       },
@@ -283,9 +329,9 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const domain = nonEmpty(args.domain, 'domain')
-        const response = nonEmpty(args.response, 'response')
-        const requestId = nonEmpty(args.requestId, 'requestId')
-        const argv = ['--domain', domain, '--response', response, '--request-id', requestId]
+        const response = oneOf(args.response, 'response', ['confirm', 'reject', 'defer', 'chat'])
+        const stableRequestId = requestId(args.requestId)
+        const argv = ['--domain', domain, '--response', response, '--request-id', stableRequestId]
         if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
         return bridge.run('respond-interest-probe', argv)
       },
@@ -314,9 +360,9 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const domain = nonEmpty(args.domain, 'domain')
-        const response = nonEmpty(args.response, 'response')
-        const requestId = nonEmpty(args.requestId, 'requestId')
-        const argv = ['--domain', domain, '--response', response, '--request-id', requestId]
+        const response = oneOf(args.response, 'response', ['confirm', 'reject', 'defer', 'chat'])
+        const stableRequestId = requestId(args.requestId)
+        const argv = ['--domain', domain, '--response', response, '--request-id', stableRequestId]
         if (typeof args.message === 'string' && args.message.trim() !== '') argv.push('--message', args.message.trim())
         return bridge.run('respond-avoidance-probe', argv)
       },
@@ -356,7 +402,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const target = nonEmpty(args.target, 'target')
-        const op = nonEmpty(args.op, 'op')
+        const op = oneOf(args.op, 'op', ['set', 'add', 'remove', 'reset'])
         const argv = ['--target', target, '--op', op]
         if (typeof args.value === 'string' && args.value.trim() !== '') argv.push('--value', args.value.trim())
         if (typeof args.parent === 'string' && args.parent.trim() !== '') argv.push('--parent', args.parent.trim())
@@ -378,7 +424,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
-        const listKind = nonEmpty(args.listKind, 'listKind')
+        const listKind = oneOf(args.listKind, 'listKind', ['favorite', 'watch_later'])
         const articleId = nonEmpty(args.articleId, 'articleId')
         const argv = ['--list-kind', listKind, '--article-id', articleId]
         if (typeof args.media === 'string' && args.media.trim() !== '') argv.push('--media', args.media.trim())
@@ -398,7 +444,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
-        const listKind = nonEmpty(args.listKind, 'listKind')
+        const listKind = oneOf(args.listKind, 'listKind', ['favorite', 'watch_later'])
         const articleId = nonEmpty(args.articleId, 'articleId')
         return bridge.run('remove-saved', ['--list-kind', listKind, '--article-id', articleId])
       },
@@ -415,7 +461,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       timeoutMs: bridge.config.timeoutMs,
       isConcurrencySafe: () => true,
       execute: async (args: Record<string, unknown>) => {
-        const listKind = nonEmpty(args.listKind, 'listKind')
+        const listKind = oneOf(args.listKind, 'listKind', ['favorite', 'watch_later'])
         const limit = typeof args.limit === 'number' ? args.limit : 50
         return bridge.run('list-saved', ['--list-kind', listKind, '--limit', String(Math.max(1, Math.min(200, Math.floor(limit))))])
       },

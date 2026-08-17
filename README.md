@@ -47,7 +47,7 @@
 21. `newsclaw_remove_saved`
 22. `newsclaw_list_saved`
 
-写操作使用稳定的 `requestId`；同一次动作重试时复用，另一动作不得复用。详细调用规范见 `skills/newsclaw-adapter/SKILL.md`。
+反馈、探针和惊喜响应使用稳定的 `requestId`；持久对话使用稳定的 `turnId`。同一次动作在超时后重试必须复用原 ID，另一动作不得复用。详细调用规范见 `skills/newsclaw-adapter/SKILL.md`。
 
 ## 本地验证
 
@@ -97,6 +97,7 @@ timeoutMs: 300000
 - DSH 设置页不会再 GET/PUT 旧 `/api/config`，因此不会出现“保存成功但新闻系统实际没采用”的假配置。
 
 更完整的字段边界见 [docs/settings-contract.md](docs/settings-contract.md)。
+界面控件与 22 个 Agent 工具的端到端闭环见 [docs/control-closure-matrix.md](docs/control-closure-matrix.md)。
 
 ## 许可
 

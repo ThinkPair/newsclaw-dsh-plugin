@@ -68,6 +68,8 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
   const handledProbes = useRef<Set<string>>(new Set())
   const probeRef = useRef<ProbeNotice[]>([])
   probeRef.current = probes
+  const spotlightRef = useRef<SpotlightNotice[]>([])
+  spotlightRef.current = spotlights
 
   // Connection probe: HTTP health is the single source of truth for the
   // status dot (the WebSocket alone flaps in background tabs and must not
@@ -100,8 +102,11 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
     void hydrateDrawer(base, handledProbes.current).then(result => {
       if (cancelled) return
       setProbes(result.probes)
-      setSpotlights(result.spotlights)
-      setNotifications(result.notifications)
+      if (result.loaded.spotlights) setSpotlights(result.spotlights)
+      if (result.loaded.notification) setNotifications(result.notifications)
+      setDrawerError(result.error)
+    }).catch(error => {
+      if (!cancelled) setDrawerError(error instanceof Error ? error.message : String(error))
     })
     return () => { cancelled = true }
   }, [base])
@@ -116,25 +121,26 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
         const domain = typeof payload.domain === 'string' ? payload.domain : ''
         const key = probeKey(event.type, domain)
         if (key === '' || handledProbes.current.has(key)) return
+        if (probeRef.current.some(probe => probe.key === key)) return
         const probeMode = typeof payload.probe_mode === 'string' ? payload.probe_mode : ''
         const challenge = probeMode === 'lateral' || probeMode === 'bridge' || probeMode === 'wildcard'
-        setProbes(prev => {
-          if (prev.some(p => p.key === key)) return prev
-          return [...prev, {
-            key,
-            type: event.type === 'avoidance.probe' ? 'avoidance.probe' : 'interest.probe',
-            domain,
-            reason: typeof payload.reason === 'string' ? payload.reason : '',
-            challenge,
-            confidence: typeof payload.confidence === 'number' ? payload.confidence : 0,
-          }]
-        })
+        const notice: ProbeNotice = {
+          key,
+          type: event.type === 'avoidance.probe' ? 'avoidance.probe' : 'interest.probe',
+          domain,
+          reason: typeof payload.reason === 'string' ? payload.reason : '',
+          challenge,
+          confidence: typeof payload.confidence === 'number' ? payload.confidence : 0,
+        }
+        probeRef.current = [...probeRef.current, notice]
+        setProbes(probeRef.current)
         setBadges(prev => ({ ...prev, profile: (prev.profile ?? 0) + 1 }))
         setLiveTick(tick => tick + 1)
       } else if (event.type === 'spotlight.candidate') {
         const article_id = typeof payload.article_id === 'string' ? payload.article_id : ''
         if (article_id === '') return
-        setSpotlights(prev => prev.some(d => d.article_id === article_id) ? prev : [...prev, {
+        if (spotlightRef.current.some(item => item.article_id === article_id)) return
+        const notice: SpotlightNotice = {
           article_id,
           title: typeof payload.title === 'string' ? payload.title : '',
           reason: typeof payload.spotlight_reason === 'string' ? payload.spotlight_reason : '',
@@ -145,7 +151,9 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
             : typeof payload.content_url === 'string' ? payload.content_url : '',
           content_id: typeof payload.content_id === 'string' ? payload.content_id : article_id,
           score: typeof payload.spotlight_score === 'number' ? payload.spotlight_score : 0,
-        }])
+        }
+        spotlightRef.current = [...spotlightRef.current, notice]
+        setSpotlights(spotlightRef.current)
         setBadges(prev => ({ ...prev, recommend: (prev.recommend ?? 0) + 1 }))
         setLiveTick(tick => tick + 1)
       } else if (event.type.startsWith('interest.') || event.type.startsWith('avoidance.')) {
@@ -181,9 +189,12 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
     setDrawerError('')
     void hydrateDrawer(base, handledProbes.current).then(result => {
       setProbes(prev => mergeProbes(prev, result.probes))
-      setSpotlights(result.spotlights)
-      setNotifications(result.notifications)
-    }).catch(() => undefined)
+      if (result.loaded.spotlights) setSpotlights(result.spotlights)
+      if (result.loaded.notification) setNotifications(result.notifications)
+      setDrawerError(result.error)
+    }).catch(error => {
+      setDrawerError(error instanceof Error ? error.message : String(error))
+    })
   }, [base])
 
   const onProbeHandled = useCallback((key: string) => {

@@ -50,9 +50,12 @@ test('client and tools resolve the same Harness row connection', () => {
   const clientEntry = read('src/client/index.ts')
   const mount = read('src/client/mount.tsx')
   const panel = read('src/client/NewsClawPanel.tsx')
+  const sharedConfig = read('src/config.ts')
   assert.match(clientEntry, /apply\(ctx: ClientContext, config\?: NewsClawClientConfig\)/)
-  assert.match(clientEntry, /apiUrl: config\?\.apiUrl/)
-  assert.match(clientEntry, /timeoutMs: typeof config\?\.timeoutMs/)
+  assert.match(clientEntry, /apiUrl: normalizeApiUrl\(config\?\.apiUrl\)/)
+  assert.match(clientEntry, /timeoutMs: normalizeTimeoutMs\(config\?\.timeoutMs\)/)
+  assert.match(sharedConfig, /127\.0\.0\.1.+localhost.+\[::1\]/s)
+  assert.match(sharedConfig, /url\.username.+url\.password.+url\.search.+url\.hash/s)
   assert.match(clientEntry, /writeApiBase\(connection\.apiUrl\)/)
   assert.match(mount, /apiUrl=\{connection\.apiUrl\}/)
   assert.match(mount, /timeoutMs=\{connection\.timeoutMs\}/)
@@ -107,6 +110,7 @@ test('plugin loading failures are isolated', () => {
   assert.match(nodeEntry, /try\s*\{/)
   assert.match(clientEntry, /try\s*\{/)
   assert.match(clientEntry, /layout\.dispose\(\)/)
+  assert.match(read('src/tools.ts'), /for \(const dispose of \[\.\.\.registered\]\.reverse\(\)\)/)
 })
 
 test('learning writes are idempotent and credentials are redacted', () => {
@@ -117,6 +121,7 @@ test('learning writes are idempotent and credentials are redacted', () => {
   assert.match(tools, /--request-id[\s\S]+bridge\.run\('respond-avoidance-probe'/)
   assert.match(api, /interest-probes\/respond[\s\S]+request_id/)
   assert.match(api, /avoidance-probes\/respond[\s\S]+request_id/)
+  assert.match(tools, /newsclaw_chat[\s\S]+turnId[\s\S]+--turn-id/)
   assert.match(bridge, /sanitizeBridgeValue/)
   assert.match(bridge, /SECRET_KEY/)
   assert.match(bridge, /\[REDACTED\]/)
@@ -135,4 +140,72 @@ test('upstream license notices ship with the source package', () => {
   }
   assert.match(read('LICENSE'), /BSD 3-Clause License/)
   assert.match(read('licenses/OpenBiliClaw-MIT.txt'), /MIT License/)
+})
+
+test('first setup is NewsClaw-only and never exposes profile rebuild', () => {
+  const api = read('src/client/api.ts')
+  const views = read('src/client/views.tsx')
+  assert.match(api, /'\/api\/news\/bootstrap\/status'/)
+  assert.doesNotMatch(api + views, /\/api\/init-status|['"]\/api\/init['"]|重新初始化|开始初始化/)
+  assert.match(views, /去电脑版完成首次设置/)
+  assert.match(views, /已有画像不会被这里重建/)
+})
+
+test('manual append preserves current cards and runtime failures stay visible', () => {
+  const views = read('src/client/views.tsx')
+  assert.match(views, /const appendManual = useCallback/)
+  assert.match(views, /setItems\(prev => \[\.\.\.\(prev \?\? \[\]\), \.\.\.fresh\]\)/)
+  assert.doesNotMatch(views, /run\('append'/)
+  assert.match(views, /Promise\.allSettled\(\[/)
+  assert.match(views, /推荐已刷新，但部分运行状态读取失败/)
+  assert.match(views, /内容已更新，但运行状态暂时读取失败/)
+})
+
+test('notification open is durably acknowledged with article identity', () => {
+  const api = read('src/client/api.ts')
+  const notifications = read('src/client/notifications.tsx')
+  assert.match(api, /'\/api\/notifications\/ack'/)
+  assert.match(api, /article_id: articleId, request_id: requestId/)
+  assert.match(notifications, /acknowledgeNotification\(base, notice\.article_id, requestId\)/)
+  assert.match(notifications, /then\(\(\) => \{\s*onHandled\(notice\.article_id\)/)
+})
+
+test('news UI does not expose video-platform vocabulary or logic', () => {
+  const sourceFiles = [
+    'src/client/NewsClawPanel.tsx', 'src/client/api.ts', 'src/client/dialogue.tsx',
+    'src/client/index.ts', 'src/client/layout.ts', 'src/client/library.tsx',
+    'src/client/notifications.tsx', 'src/client/profile.tsx', 'src/client/settings.tsx',
+    'src/client/views.tsx', 'src/bridge.ts', 'src/index.ts', 'src/tools.ts',
+  ].map(read).join('\n')
+  assert.doesNotMatch(sourceFiles, /OpenBiliClaw|BVID|\bbvid\b|Bilibili|UP 主|弹幕|视频推荐|喜欢时长/i)
+})
+
+test('saved, profile, messages and autostart do not mask failed state reads', () => {
+  const api = read('src/client/api.ts')
+  const views = read('src/client/views.tsx')
+  const library = read('src/client/library.tsx')
+  const notifications = read('src/client/notifications.tsx')
+  const settings = read('src/client/settings.tsx')
+  assert.doesNotMatch(api, /fetchSavedStatus[\s\S]{0,400}catch \{/)
+  assert.doesNotMatch(views, /fetchSavedStatus\([^\n]+\.catch\(\(\) => false\)/)
+  assert.match(library, /useState<boolean \| null>\(null\)/)
+  assert.match(notifications, /Promise\.allSettled/)
+  assert.match(notifications, /部分消息来源读取失败/)
+  assert.match(settings, /const verified = await fetchAutostartStatus\(base\)/)
+  assert.match(settings, /verified\.enabled !== enabled/)
+  assert.match(api, /画像摘要返回格式无效/)
+  assert.match(api, /开机启动状态缺少 enabled/)
+  assert.match(read('src/client/dialogue.tsx'), /Promise\.allSettled/)
+})
+
+test('control closure matrix is packaged and covers every agent tool', () => {
+  const matrix = read('docs/control-closure-matrix.md')
+  const packageJson = JSON.parse(read('package.json'))
+  assert.ok(packageJson.files.includes('docs/control-closure-matrix.md'))
+  for (const name of [...read('src/tools.ts').matchAll(/name:\s*'(newsclaw_[^']+)'/g)].map(match => match[1])) {
+    assert.match(matrix, new RegExp(`\\b${name}\\b`), `${name} missing from closure matrix`)
+  }
+  assert.match(matrix, /Handler \/ API/)
+  assert.match(matrix, /状态与持久化/)
+  assert.match(matrix, /失败、超时与重试/)
 })

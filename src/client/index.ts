@@ -7,8 +7,8 @@
  * `PanelLayoutController` appends one item in the first implicit trailing
  * column and gives it the panel width, so opening the panel PUSHES the
  * center/conversation column instead of overlaying it. It deliberately never
- * rewrites the frame's shared `grid-template-columns`, allowing OpenBiliClaw
- * and other independent side panels to coexist without observer feedback.
+ * rewrites the frame's shared `grid-template-columns`, allowing other
+ * independent side panels to coexist without observer feedback.
  *
  * The only slot registration is the left-sidebar trigger button
  * (`sidebar.footer.action`), which toggles the column. The panel's business
@@ -20,7 +20,8 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // theme plugin's Context merge (ctx.theme) into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
-import { DEFAULT_API_BASE, writeApiBase } from './api.ts'
+import { writeApiBase } from './api.ts'
+import { normalizeApiUrl, normalizeTimeoutMs } from '../config.ts'
 import { createPanelLayoutStore } from './store.ts'
 import { PanelLayoutController } from './layout.ts'
 import { mountPanel, type PanelThemeFace } from './mount.tsx'
@@ -43,12 +44,10 @@ export interface NewsClawClientConnection {
   timeoutMs: number
 }
 
-function resolveClientConfig(config?: NewsClawClientConfig): NewsClawClientConnection {
+export function resolveClientConfig(config?: NewsClawClientConfig): NewsClawClientConnection {
   return {
-    apiUrl: config?.apiUrl?.trim() !== '' && config?.apiUrl !== undefined
-      ? config.apiUrl.trim().replace(/\/+$/, '')
-      : DEFAULT_API_BASE,
-    timeoutMs: typeof config?.timeoutMs === 'number' && config.timeoutMs > 0 ? config.timeoutMs : 300_000,
+    apiUrl: normalizeApiUrl(config?.apiUrl),
+    timeoutMs: normalizeTimeoutMs(config?.timeoutMs),
   }
 }
 

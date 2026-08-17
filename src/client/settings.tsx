@@ -212,9 +212,10 @@ export function SettingsOverlay({ base, timeoutMs, onClose }: { base: string; ti
     if (runtimeResult.status === 'fulfilled') setRuntime(runtimeResult.value)
     if (sourcesResult.status === 'fulfilled') setSources(sourcesResult.value)
     if (autostartResult.status === 'fulfilled') setAutostart({ loaded: true, enabled: autostartResult.value.enabled, busy: false })
-    else setAutostart(value => ({ ...value, loaded: true, busy: false }))
+    else setAutostart(value => ({ ...value, loaded: false, busy: false }))
     const failed = [runtimeResult, sourcesResult].filter(result => result.status === 'rejected')
     if (failed.length > 0) setNotice(failed.length === 2 ? '新闻爪后端暂时不可达，请确认服务已经启动。' : '部分实时状态读取失败，当前展示的是已成功取得的数据。')
+    else if (autostartResult.status === 'rejected') setNotice('运行状态已读取，但开机自启动的真实状态暂时无法确认。')
     setLoading(false)
   }, [base])
 
@@ -228,11 +229,19 @@ export function SettingsOverlay({ base, timeoutMs, onClose }: { base: string; ti
     setAutostart(value => ({ ...value, busy: true }))
     setNotice('')
     try {
-      await applyAutostart(base, enabled)
-      setAutostart({ loaded: true, enabled, busy: false })
-      setNotice(enabled ? '已开启开机自动启动。' : '已关闭开机自动启动。')
+      const accepted = await applyAutostart(base, enabled)
+      if (!accepted) throw new Error('后端没有确认这次自启动修改')
+      const verified = await fetchAutostartStatus(base)
+      if (verified.enabled !== enabled) throw new Error('写入后的真实状态与目标不一致')
+      setAutostart({ loaded: true, enabled: verified.enabled, busy: false })
+      setNotice(enabled ? '已开启开机自动启动（状态已复核）。' : '已关闭开机自动启动（状态已复核）。')
     } catch (error) {
-      setAutostart(value => ({ ...value, busy: false }))
+      try {
+        const verified = await fetchAutostartStatus(base)
+        setAutostart({ loaded: true, enabled: verified.enabled, busy: false })
+      } catch {
+        setAutostart(value => ({ ...value, loaded: false, busy: false }))
+      }
       setNotice('自启动设置失败：' + (error instanceof Error ? error.message : String(error)))
     }
   }, [base])

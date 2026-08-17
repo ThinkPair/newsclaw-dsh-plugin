@@ -8,11 +8,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  appendRecommendations, fetchActivityFeed, fetchSpotlightBatch, fetchInitStatus, fetchRuntimeStatus, fetchSavedStatus,
+  appendRecommendations, fetchActivityFeed, fetchNewsBootstrapStatus, fetchSpotlightBatch, fetchRuntimeStatus, fetchSavedStatus,
   fetchRecommendations, removeSaved, reportClick, reshuffleRecommendations, respondToSpotlight, saveItem,
-  imageProxyCrossOrigin, imageProxyUrl, readApiBase, stableId, startInit, submitFeedback,
+  imageProxyCrossOrigin, imageProxyUrl, readApiBase, stableId, submitFeedback,
   type ActivityItem, type SpotlightItem, type RecommendationItem,
-  type RuntimeStatus,
+  type NewsBootstrapStatus, type RuntimeStatus,
 } from './api.ts'
 import { ClockIcon, StarIcon } from './icons.tsx'
 import css from './panel.module.css'
@@ -171,18 +171,34 @@ export function useActionId(identity: string, action: string): string {
   return id
 }
 
-/** Open a content URL (recording the click first, never blocking the open). */
-export function openItem(base: string, item: { recommendation_id?: number; content_id: string; article_id: string; content_url: string; media: string; title: string }): void {
+/** Pending click ids survive an ambiguous timeout, so a user's retry is idempotent. */
+const pendingClickIds = new Map<string, string>()
+
+/** Open a content URL immediately, then report whether the weak open signal persisted. */
+export function openItem(
+  base: string,
+  item: { recommendation_id?: number; content_id: string; article_id: string; content_url: string; media: string; title: string },
+  onPersistError?: (error: unknown) => void,
+): void {
   const url = item.content_url
   if (url === '') return
+  const identity = `${item.recommendation_id ?? ''}:${item.article_id || item.content_id}:${url}`
+  const requestId = pendingClickIds.get(identity) ?? stableId()
+  pendingClickIds.set(identity, requestId)
   void reportClick(base, {
     recommendation_id: item.recommendation_id,
     article_id: item.article_id !== '' ? item.article_id : item.content_id,
     content_url: item.content_url,
     media: item.media,
     title: item.title,
-    request_id: stableId(),
-  }).catch(() => { /* click logging must never block opening */ })
+    request_id: requestId,
+  }).then(() => {
+    if (pendingClickIds.get(identity) === requestId) pendingClickIds.delete(identity)
+  }).catch(error => {
+    // Reading the original article remains available during degradation, but
+    // the user must know that this learning signal was not confirmed.
+    onPersistError?.(error)
+  })
   window.open(url, '_blank', 'noopener')
 }
 
@@ -220,17 +236,25 @@ function RecommendationCard({ base, item, onDismissed, onError }: RecCardProps):
   const [comment, setComment] = useState('')
   const [composerOpen, setComposerOpen] = useState(false)
   const [saved, setSaved] = useState<{ favorite: boolean; watch_later: boolean } | null>(null)
+  const commentIds = useRef(new Map<string, string>())
 
   // Saved toggle state for this card.
   useEffect(() => {
     let cancelled = false
     const key = item.item_key !== '' ? item.item_key : item.article_id
     if (key === '') return
+    setSaved(null)
     void Promise.all([
-      fetchSavedStatus(base, 'favorite', key).catch(() => false),
-      fetchSavedStatus(base, 'watch_later', key).catch(() => false),
+      fetchSavedStatus(base, 'favorite', key),
+      fetchSavedStatus(base, 'watch_later', key),
     ]).then(([favorite, watch_later]) => {
       if (!cancelled) setSaved({ favorite, watch_later })
+    }).catch(err => {
+      if (!cancelled) {
+        setSaved(null)
+        setStatus('收藏状态读取失败：' + (err instanceof Error ? err.message : String(err)))
+        setStatusTone('error')
+      }
     })
     return () => { cancelled = true }
   }, [base, item.item_key, item.article_id])
@@ -277,11 +301,16 @@ function RecommendationCard({ base, item, onDismissed, onError }: RecCardProps):
   const submitComment = (): void => {
     const note = comment.trim()
     if (note === '') return
-    const commentId = stableId()
-    setComment('')
-    void act('comment', () => submitFeedback(base, { recommendation_id: item.id, feedback_type: 'comment', note, request_id: commentId }).then(() => {
-      setStatus('评论已记下。')
-    }), '评论已记下。', 'success')
+    let commentId = commentIds.current.get(note)
+    if (commentId === undefined) {
+      commentId = stableId()
+      commentIds.current.set(note, commentId)
+    }
+    void act('comment', async () => {
+      await submitFeedback(base, { recommendation_id: item.id, feedback_type: 'comment', note, request_id: commentId })
+      commentIds.current.delete(note)
+      setComment('')
+    }, '评论已记下。', 'success')
   }
 
   const anyBusy = busy !== null
@@ -296,6 +325,9 @@ function RecommendationCard({ base, item, onDismissed, onError }: RecCardProps):
       content_url: item.content_url,
       media: item.media,
       title: item.title,
+    }, err => {
+      setStatus('原文已打开，但阅读记录未确认保存：' + (err instanceof Error ? err.message : String(err)))
+      setStatusTone('error')
     })
   }
 
@@ -406,11 +438,17 @@ function SpotlightBanner(props: { base: string; onError: (text: string) => void 
     if (item === undefined || item === null) return
     const key = item.item_key !== '' ? item.item_key : item.article_id
     if (key === '') return
+    setSaved(null)
     void Promise.all([
-      fetchSavedStatus(base, 'favorite', key).catch(() => false),
-      fetchSavedStatus(base, 'watch_later', key).catch(() => false),
+      fetchSavedStatus(base, 'favorite', key),
+      fetchSavedStatus(base, 'watch_later', key),
     ]).then(([favorite, watch_later]) => {
       if (!cancelled) setSaved({ favorite, watch_later })
+    }).catch(err => {
+      if (!cancelled) {
+        setSaved(null)
+        onError('收藏状态读取失败：' + (err instanceof Error ? err.message : String(err)))
+      }
     })
     return () => { cancelled = true }
   }, [base, item])
@@ -469,10 +507,18 @@ function SpotlightBanner(props: { base: string; onError: (text: string) => void 
     if (item === undefined || item === null) return
     const message = chatDraft.trim()
     if (message === '') return
-    setChatDraft('')
     setBusy('chat')
+    setChatStatus('')
     try {
-      await respondToSpotlight(base, { article_id: item.article_id, response: 'chat', title: item.title, message, request_id: stableId() })
+      const key = `${item.article_id}:chat:${message}`
+      let request_id = actionIds.current.get(key)
+      if (request_id === undefined) {
+        request_id = stableId()
+        actionIds.current.set(key, request_id)
+      }
+      await respondToSpotlight(base, { article_id: item.article_id, response: 'chat', title: item.title, message, request_id })
+      actionIds.current.delete(key)
+      setChatDraft('')
       setChatStatus('已转达给新闻爪，它会继续追问和学习。')
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -490,7 +536,10 @@ function SpotlightBanner(props: { base: string; onError: (text: string) => void 
   const coverFailed = failedCoverKey === coverKey
 
   const open = (): void => {
-    void respond(item, 'open')
+    // `view` only marks the spotlight card seen; openItem records the single
+    // weak article-open learning signal. Using `open` here as well would
+    // double-count the click under two request ids.
+    void respond(item, 'view')
     openItem(base, {
       recommendation_id: undefined,
       content_id: item.content_id !== '' ? item.content_id : item.article_id,
@@ -498,6 +547,8 @@ function SpotlightBanner(props: { base: string; onError: (text: string) => void 
       content_url: item.content_url,
       media: item.media,
       title: item.title,
+    }, err => {
+      onError('原文已打开，但阅读记录未确认保存：' + (err instanceof Error ? err.message : String(err)))
     })
   }
 
@@ -588,12 +639,15 @@ export function ActivityFooter(props: { base: string }): React.JSX.Element | nul
   const [feed, setFeed] = useState<{ items: ActivityItem[]; liveSummary: string; headline: string; hasMore: boolean; nextCursor: string } | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [error, setError] = useState('')
 
   const reload = useCallback(async () => {
+    setError('')
     try {
       setFeed(await fetchActivityFeed(base, { limit: 5 }))
-    } catch {
+    } catch (err) {
       setFeed(null)
+      setError(err instanceof Error ? err.message : String(err))
     }
   }, [base])
 
@@ -602,18 +656,22 @@ export function ActivityFooter(props: { base: string }): React.JSX.Element | nul
   const loadMore = useCallback(async () => {
     if (feed === null || !feed.hasMore || loadingMore) return
     setLoadingMore(true)
+    setError('')
     try {
       const next = await fetchActivityFeed(base, { limit: 5, before: feed.nextCursor })
       setFeed(prev => prev === null ? next : {
         ...next,
         items: [...prev.items, ...next.items],
       })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoadingMore(false)
     }
   }, [base, feed, loadingMore])
 
-  if (feed === null || (feed.items.length === 0 && feed.liveSummary === '' && feed.headline === '')) return null
+  if (feed === null) return error === '' ? null : <ErrorNote text={`后台动态读取失败：${error}`} />
+  if (feed.items.length === 0 && feed.liveSummary === '' && feed.headline === '') return null
 
   const summaryOf = (item: ActivityItem): string => {
     if (typeof item.summary === 'string' && item.summary !== '') return item.summary
@@ -635,6 +693,7 @@ export function ActivityFooter(props: { base: string }): React.JSX.Element | nul
           </button>
         ) : null}
       </div>
+      {error !== '' ? <ErrorNote text={`加载更多失败：${error}`} /> : null}
       {expanded && feed.items.length > 0 ? (
         <div className={css.footerHistory}>
           {feed.items.map((item, i) => (
@@ -653,46 +712,21 @@ export function ActivityFooter(props: { base: string }): React.JSX.Element | nul
   )
 }
 
-/** First-run init prompt (popup's empty-state init card, simplified). */
-function InitPrompt(props: { base: string; onDone: () => void; onError: (text: string) => void }): React.JSX.Element {
-  const { base, onDone, onError } = props
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState('')
-  const run = useCallback(async () => {
-    setBusy(true)
-    setStatus('正在提交初始化任务…')
-    try {
-      await startInit(base, {})
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 3_000))
-        const init = await fetchInitStatus(base)
-        if (init.initialized) {
-          setStatus('初始化完成，画像已生成。')
-          onDone()
-          return
-        }
-        if (!init.running) {
-          setStatus('初始化尚未完成；可稍后刷新，或到 设置-通用 重新初始化。')
-          return
-        }
-        setStatus('初始化进行中，正在拉取数据并生成画像…')
-      }
-      setStatus('初始化仍在后台进行，请稍后刷新查看。')
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }, [base, onDone, onError])
-
+/** Read-only first-setup handoff. DSH never force-rebuilds an existing profile. */
+function InitPrompt(props: { base: string; status: NewsBootstrapStatus; onRefresh: () => void; busy: boolean }): React.JSX.Element {
+  const { base, status, onRefresh, busy } = props
+  const failed = status.status === 'failed'
+  const running = status.running || status.status === 'running'
   return (
     <div className={css.initPrompt}>
       <div className={css.initPromptCopy}>
-        <strong>从零建立你的新闻画像</strong>
-        <span>只从你的选择、对话和后续反馈开始，不导入旧工具历史或旧画像。</span>
-        {status !== '' ? <span className={css.initPromptStatus} role="status">{status}</span> : null}
+        <strong>{running ? '首次设置正在进行' : failed ? '首次设置需要重试' : '先完成新闻爪首次设置'}</strong>
+        <span>{running ? '新闻爪正在抓取首批真实新闻并建立画像。' : '兴趣方向与数据源需要在电脑版填写；已有画像不会被这里重建。'}</span>
+        {status.detail !== '' ? <span className={css.initPromptStatus} role="status">{status.detail}</span> : null}
       </div>
-      <ActionButton label={busy ? '初始化中…' : '开始初始化'} primary disabled={busy} onClick={() => void run()} />
+      {running
+        ? <ActionButton label={busy ? '刷新中…' : '刷新进度'} primary disabled={busy} onClick={onRefresh} />
+        : <ActionButton label={failed ? '去电脑版检查并重试' : '去电脑版完成首次设置'} primary onClick={() => { window.open(`${base}/web`, '_blank', 'noopener') }} />}
     </div>
   )
 }
@@ -702,20 +736,29 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
   const { base, refreshKey } = props
   const [items, setItems] = useState<RecommendationItem[] | null>(null)
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
+  const [bootstrap, setBootstrap] = useState<NewsBootstrapStatus | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [excluded, setExcluded] = useState<string[]>([])
   const reload = useCallback(async () => {
-    try {
-      const [recs, runtime] = await Promise.all([
-        fetchRecommendations(base),
-        fetchRuntimeStatus(base),
-      ])
-      setItems(recs)
-      setStatus(runtime)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+    setBusy('refresh')
+    setError('')
+    const [recs, runtime, bootstrapState] = await Promise.allSettled([
+      fetchRecommendations(base),
+      fetchRuntimeStatus(base),
+      fetchNewsBootstrapStatus(base),
+    ])
+    if (recs.status === 'fulfilled') {
+      setItems(recs.value)
+      setExcluded([])
+    } else {
+      setError(recs.reason instanceof Error ? recs.reason.message : String(recs.reason))
     }
+    if (runtime.status === 'fulfilled') setStatus(runtime.value)
+    if (bootstrapState.status === 'fulfilled') setBootstrap(bootstrapState.value)
+    const auxiliaryFailures = [runtime, bootstrapState].filter(result => result.status === 'rejected').length
+    if (recs.status === 'fulfilled' && auxiliaryFailures > 0) setError('推荐已刷新，但部分运行状态读取失败；请稍后再试。')
+    setBusy('')
   }, [base])
 
   useEffect(() => { void reload() }, [reload])
@@ -727,7 +770,9 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
       const next = await action()
       setItems(next)
       setExcluded([])
-      await fetchRuntimeStatus(base).then(setStatus).catch(() => undefined)
+      await fetchRuntimeStatus(base).then(setStatus).catch(() => {
+        setError('内容已更新，但运行状态暂时读取失败。')
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -755,6 +800,7 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
   const appendMore = useCallback(async () => {
     if (items === null || busy !== '' || exhausted || appendBlocked) return
     setBusy('append-auto')
+    setError('')
     try {
       const next = await appendRecommendations(base, { excludedArticleIds: [...excluded, ...items.map(item => item.item_key !== '' ? item.item_key : item.article_id).filter(Boolean)] })
       if (next.length === 0) setExhausted(true)
@@ -762,7 +808,9 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
         setItems(prev => [...(prev ?? []), ...next])
         setExcluded(prev => [...prev, ...items.map(item => item.item_key !== '' ? item.item_key : item.article_id).filter(Boolean)])
       }
-      await fetchRuntimeStatus(base).then(setStatus).catch(() => undefined)
+      await fetchRuntimeStatus(base).then(setStatus).catch(() => {
+        setError('新闻已追加，但运行状态暂时读取失败。')
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setAppendBlocked(true)
@@ -770,6 +818,40 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
       setBusy('')
     }
   }, [base, busy, exhausted, appendBlocked, items, excluded])
+
+  const appendManual = useCallback(async () => {
+    if (items === null || busy !== '') return
+    setBusy('append')
+    setError('')
+    try {
+      const currentIds = items.map(item => item.item_key !== '' ? item.item_key : item.article_id).filter(Boolean)
+      const next = await appendRecommendations(base, { excludedArticleIds: [...excluded, ...currentIds] })
+      if (next.length === 0) {
+        setExhausted(true)
+      } else {
+        const seen = new Set(currentIds)
+        const fresh = next.filter(item => {
+          const key = item.item_key !== '' ? item.item_key : item.article_id
+          if (key === '' || seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        if (fresh.length === 0) setExhausted(true)
+        else {
+          setItems(prev => [...(prev ?? []), ...fresh])
+          setExcluded(prev => [...prev, ...currentIds])
+          setExhausted(false)
+        }
+      }
+      await fetchRuntimeStatus(base).then(setStatus).catch(() => {
+        setError('新闻已追加，但运行状态暂时读取失败。')
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy('')
+    }
+  }, [base, busy, excluded, items])
   const appendMoreRef = useRef<() => Promise<void>>(async () => undefined)
   appendMoreRef.current = appendMore
   useEffect(() => {
@@ -810,7 +892,7 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
         </div>
       </div>
       {error !== '' ? <ErrorNote text={error} /> : null}
-      {status?.initialized === false ? <InitPrompt base={base} onDone={() => void reload()} onError={setError} /> : null}
+      {bootstrap !== null && !bootstrap.profile_ready ? <InitPrompt base={base} status={bootstrap} onRefresh={() => void reload()} busy={busy !== ''} /> : null}
       <SpotlightBanner key={`spotlight-${refreshKey}`} base={base} onError={setError} />
       {items !== null && items.length === 0
         ? <EmptyState text="推荐池暂时为空。可以先完成首次设置，或等新闻源下一轮刷新。" />
@@ -826,10 +908,7 @@ export function RecommendView(props: { base: string; refreshKey: number }): Reac
       ))}
       {items !== null && items.length > 0 ? (
         <div className={css.cardActions}>
-          <ActionButton label="追加一批" disabled={busy !== '' || exhausted} onClick={() => { setAppendBlocked(false); void run('append', () => appendRecommendations(base, { excludedArticleIds: excludeAll }).then(next => {
-            if (next.length === 0) setExhausted(true)
-            return next
-          })) }} />
+          <ActionButton label="追加一批" disabled={busy !== '' || exhausted} onClick={() => { setAppendBlocked(false); void appendManual() }} />
           <ActionButton label="刷新" disabled={busy !== ''} onClick={() => { setExhausted(false); setAppendBlocked(false); void reload() }} />
         </div>
       ) : null}

@@ -1,11 +1,11 @@
 /** NewsClaw local library: later, favorites and recent reading history. */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   fetchContentHistory, fetchSaved, fetchSavedStatus, removeSaved, saveItem,
   sendBehaviorEvents, stableId,
   type ContentHistoryItem, type SavedItem,
 } from './api.ts'
-import { ActionButton, EmptyState, ErrorNote, MetaRow, Thumb } from './views.tsx'
+import { ActionButton, EmptyState, ErrorNote, MetaRow, openItem, Thumb } from './views.tsx'
 import css from './panel.module.css'
 
 type LibraryTab = 'watch_later' | 'favorite' | 'history'
@@ -29,7 +29,7 @@ function articleId(item: Pick<SavedItem, 'article_id' | 'content_id' | 'item_key
   return item.item_key
 }
 
-async function postSavedFeedback(base: string, item: SavedItem, feedbackType: string, note = ''): Promise<void> {
+async function postSavedFeedback(base: string, item: SavedItem, feedbackType: string, note: string, eventId: string): Promise<void> {
   const id = articleId(item)
   const result = await sendBehaviorEvents(base, [{
     type: 'feedback',
@@ -43,7 +43,7 @@ async function postSavedFeedback(base: string, item: SavedItem, feedbackType: st
       feedback_note: note,
       saved_feedback: true,
     },
-    event_id: stableId(),
+    event_id: eventId,
   }])
   if (result.accepted < 1) throw new Error(result.rejected[0]?.reason || '反馈没有保存，请稍后重试。')
 }
@@ -57,19 +57,28 @@ function SavedCard(props: {
 }): React.JSX.Element {
   const { base, listKind, item, removing, onRemove } = props
   const otherKind = listKind === 'favorite' ? 'watch_later' : 'favorite'
-  const [otherSaved, setOtherSaved] = useState(false)
+  const [otherSaved, setOtherSaved] = useState<boolean | null>(null)
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('')
+  const actionIds = useRef(new Map<string, string>())
 
   useEffect(() => {
     let cancelled = false
+    setOtherSaved(null)
+    setStatus('')
     void fetchSavedStatus(base, otherKind, item.item_key)
       .then(saved => { if (!cancelled) setOtherSaved(saved) })
-      .catch(() => { if (!cancelled) setOtherSaved(false) })
+      .catch(error => {
+        if (!cancelled) {
+          setOtherSaved(null)
+          setStatus('另一列表状态读取失败：' + (error instanceof Error ? error.message : String(error)))
+        }
+      })
     return () => { cancelled = true }
   }, [base, item.item_key, otherKind])
 
   const toggleOther = useCallback(async () => {
+    if (otherSaved === null) return
     setBusy('other')
     setStatus('')
     try {
@@ -85,7 +94,7 @@ function SavedCard(props: {
           cover_url: item.cover_url,
         })
       }
-      setOtherSaved(value => !value)
+      setOtherSaved(value => value === null ? null : !value)
       setStatus(otherSaved ? '已从另一列表移除。' : otherKind === 'favorite' ? '已加入收藏。' : '已加入稍后读。')
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -98,7 +107,14 @@ function SavedCard(props: {
     setBusy(kind)
     setStatus('')
     try {
-      await postSavedFeedback(base, item, kind, note)
+      const key = `${kind}:${note}`
+      let eventId = actionIds.current.get(key)
+      if (eventId === undefined) {
+        eventId = stableId()
+        actionIds.current.set(key, eventId)
+      }
+      await postSavedFeedback(base, item, kind, note, eventId)
+      actionIds.current.delete(key)
       setStatus('这条反馈已用于更新你的画像。')
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -120,7 +136,13 @@ function SavedCard(props: {
         <div className={css.cardTitle}>{item.title || item.item_key}</div>
         <MetaRow media={item.media} author={item.author_name} time={item.added_at} />
         <div className={css.cardActions}>
-          <ActionButton label="打开原文" primary disabled={anyBusy || item.content_url === ''} onClick={() => { window.open(item.content_url, '_blank', 'noopener') }} />
+          <ActionButton label="打开原文" primary disabled={anyBusy || item.content_url === ''} onClick={() => {
+            openItem(
+              base,
+              { content_id: item.content_id, article_id: articleId(item), content_url: item.content_url, media: item.media, title: item.title },
+              error => { setStatus('原文已打开，但阅读记录未确认保存：' + (error instanceof Error ? error.message : String(error))) },
+            )
+          }} />
           <ActionButton label="移除" danger disabled={anyBusy} onClick={() => onRemove(item.item_key)} />
         </div>
         <div className={css.savedFeedbackRow}>
@@ -129,7 +151,7 @@ function SavedCard(props: {
           <ActionButton label="聊一聊" disabled={anyBusy} onClick={comment} />
           <ActionButton
             label={otherKind === 'favorite' ? (otherSaved ? '取消收藏' : '收藏') : (otherSaved ? '取消稍后读' : '稍后读')}
-            disabled={anyBusy}
+            disabled={anyBusy || otherSaved === null}
             onClick={() => void toggleOther()}
           />
         </div>
@@ -252,7 +274,20 @@ function HistoryList({ base }: { base: string }): React.JSX.Element {
             <MetaRow media={item.media} author={item.author_name} time={item.occurred_at} />
             <HistoryContextBadges item={item} />
             <div className={css.cardActions}>
-              <ActionButton label="打开原文" primary disabled={item.content_url === ''} onClick={() => { window.open(item.content_url, '_blank', 'noopener') }} />
+              <ActionButton label="打开原文" primary disabled={item.content_url === ''} onClick={() => {
+                openItem(
+                  base,
+                  {
+                    recommendation_id: item.recommendation_id ?? undefined,
+                    content_id: item.content_id,
+                    article_id: item.content_id !== '' ? item.content_id : item.item_key,
+                    content_url: item.content_url,
+                    media: item.media,
+                    title: item.title,
+                  },
+                  cause => { setError('原文已打开，但阅读记录未确认保存：' + (cause instanceof Error ? cause.message : String(cause))) },
+                )
+              }} />
             </div>
           </div>
         </div>

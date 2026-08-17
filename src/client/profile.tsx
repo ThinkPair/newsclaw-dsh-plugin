@@ -220,6 +220,7 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      setProfile(current => current === undefined ? null : current)
     }
   }, [base])
 
@@ -244,7 +245,9 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
   }, [base, cognition.hasMore, cognition.nextCursor, cognitionLoading])
 
   if (profile === undefined) return <EmptyState text="加载中…" />
-  if (profile === null) return <EmptyState text="画像尚未生成（需要先完成初始化）。" />
+  if (profile === null) return error !== ''
+    ? <><ErrorNote text={`画像读取失败：${error}`} /><ActionButton label="重试" onClick={() => void reload()} /></>
+    : <EmptyState text="画像尚未生成，请先在电脑版完成首次设置。" />
 
   const activeInterests = profile.speculative_interests.filter(p => p.status === 'active')
   const activeAvoidances = profile.speculative_avoidances.filter(p => p.status === 'active')
@@ -288,7 +291,7 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
             <Layer label="Interest — 你最近在看什么" />
             {profile.likes.length > 0 ? <Group title="感兴趣的方向"><InterestTree label="喜欢" tone="sky" domains={profile.likes} /></Group> : null}
             {profile.dislikes.length > 0 ? <Group title="明显会避开"><InterestTree label="不喜欢" tone="danger" domains={profile.dislikes} /></Group> : null}
-            {profile.favorite_sources.length > 0 ? <Group title="常看的 UP 主"><Chips chips={profile.favorite_sources} tone="brand" /></Group> : null}
+            {profile.favorite_sources.length > 0 ? <Group title="常看的媒体来源"><Chips chips={profile.favorite_sources} tone="brand" /></Group> : null}
           </>
         ) : null}
         {profile.life_stage !== '' || profile.current_phase !== '' ? (
@@ -306,7 +309,7 @@ export function ProfileView(props: { base: string }): React.JSX.Element {
             {profile.cognitive_style.length > 0 ? <Group title="认知风格"><Chips chips={profile.cognitive_style} /></Group> : null}
             {profile.style.preferred_duration !== '' || profile.style.preferred_pace !== '' ? (
               <Group title="口味">
-                {profile.style.preferred_duration !== '' ? <p className={css.profilePhaseCopy}>喜欢时长：{profile.style.preferred_duration}</p> : null}
+                {profile.style.preferred_duration !== '' ? <p className={css.profilePhaseCopy}>偏好篇幅：{profile.style.preferred_duration}</p> : null}
                 {profile.style.preferred_pace !== '' ? <p className={css.profilePhaseCopy}>喜欢节奏：{profile.style.preferred_pace}</p> : null}
               </Group>
             ) : null}

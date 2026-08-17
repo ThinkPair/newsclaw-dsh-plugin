@@ -49,8 +49,9 @@ system.
    position sizing, broker actions or guaranteed-return language.
 5. NewsClaw does not validate market numbers. Attribute claims to the article
    and preserve the original URL and publication time.
-6. Each durable action needs a stable `requestId`. Reuse it only for retries of
-   the exact same action; never reuse it for a different article or signal.
+6. Feedback, probe and spotlight writes need a stable `requestId`; durable
+   `newsclaw_chat` needs a stable `turnId`. Reuse it only for retries of the
+   exact same action/turn; never reuse it for different content or messages.
 7. User edits made through `newsclaw_edit_profile` override AI inference.
 8. `newsclaw_save_local` is local-only. Never sync to media accounts or other
    external services.

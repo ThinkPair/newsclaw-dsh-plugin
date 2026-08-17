@@ -18,6 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createBridge, type BridgeConfig } from './bridge.ts'
 import { registerBridgeTools } from './tools.ts'
 import { loadAdapterSkill } from './skill.ts'
+import { normalizeApiUrl, normalizeTimeoutMs } from './config.ts'
 
 /** Plugin id for loader rows. */
 export const name = 'newsclaw'
@@ -35,15 +36,13 @@ export interface NewsClawRowConfig {
 const DEFAULT_SKILL_PATH = new URL('../skills/newsclaw-adapter/SKILL.md', import.meta.url)
 
 /** Apply config defaults and normalize paths. */
-function resolveConfig(config: NewsClawRowConfig | undefined): BridgeConfig {
+export function resolveConfig(config: NewsClawRowConfig | undefined): BridgeConfig {
   return {
-    apiUrl: config?.apiUrl?.trim() !== '' && config?.apiUrl !== undefined
-      ? config.apiUrl
-      : 'http://127.0.0.1:8430',
-    skillPath: config?.skillPath?.trim() !== '' && config?.skillPath !== undefined
-      ? config.skillPath
+    apiUrl: normalizeApiUrl(config?.apiUrl),
+    skillPath: typeof config?.skillPath === 'string' && config.skillPath.trim() !== ''
+      ? config.skillPath.trim()
       : DEFAULT_SKILL_PATH,
-    timeoutMs: typeof config?.timeoutMs === 'number' && config.timeoutMs > 0 ? config.timeoutMs : 300_000,
+    timeoutMs: normalizeTimeoutMs(config?.timeoutMs),
   }
 }
 

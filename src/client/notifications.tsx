@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  fetchAvoidanceProbes, fetchSpotlightBatch, fetchInterestProbes, fetchPendingNotification,
+  acknowledgeNotification, fetchAvoidanceProbes, fetchSpotlightBatch, fetchInterestProbes, fetchPendingNotification,
   respondAvoidanceProbe, respondInterestProbe, respondToSpotlight,
   stableId, type SpotlightItem, type ProbeItem,
 } from './api.ts'
@@ -62,7 +62,7 @@ const AVOIDANCE_ACTIONS = [
 /** Dedupe helpers (same key scheme as probe-notification-helpers.js). */
 export function probeKey(type: string, domain: string): string {
   const normalized = domain.trim().toLowerCase()
-  return normalized === '' ? '' : `${type === 'avoidance.probe' ? 'avoidance.probe' : 'interest.probe'}:${normalized}`
+  return normalized === '' ? '' : `${type.startsWith('avoidance.') ? 'avoidance.probe' : 'interest.probe'}:${normalized}`
 }
 
 /** One probe message card with inline actions. */
@@ -131,7 +131,7 @@ function SpotlightMessage(props: {
 }): React.JSX.Element {
   const { base, notice, onHandled, onError } = props
   const [busy, setBusy] = useState('')
-  const [requestIds] = useState(() => ({ open: stableId(), like: stableId(), dislike: stableId(), ignore: stableId(), chat: stableId() }))
+  const [requestIds] = useState(() => ({ view: stableId(), like: stableId(), dislike: stableId(), ignore: stableId(), chat: stableId() }))
   const act = useCallback(async (response: string) => {
     setBusy(response)
     try {
@@ -155,7 +155,9 @@ function SpotlightMessage(props: {
           primary
           disabled={busy !== '' || notice.content_url === ''}
           onClick={() => {
-            void act('open')
+            // Mark the spotlight seen, while openItem records exactly one
+            // article-open learning event.
+            void act('view')
             openItem(base, {
               recommendation_id: undefined,
               content_id: notice.content_id !== '' ? notice.content_id : notice.article_id,
@@ -163,6 +165,8 @@ function SpotlightMessage(props: {
               content_url: notice.content_url,
               media: notice.media,
               title: notice.title,
+            }, error => {
+              onError('原文已打开，但阅读记录未确认保存：' + (error instanceof Error ? error.message : String(error)))
             })
           }}
         />
@@ -178,8 +182,24 @@ function NotificationMessage(props: {
   base: string
   notice: RecommendationNotice
   onHandled: (article_id: string) => void
+  onError: (text: string) => void
 }): React.JSX.Element {
-  const { base, notice, onHandled } = props
+  const { base, notice, onHandled, onError } = props
+  const [busy, setBusy] = useState(false)
+  const [requestId] = useState(stableId)
+  const open = useCallback(() => {
+    openItem(
+      base,
+      { content_id: notice.article_id, article_id: notice.article_id, content_url: notice.original_url, media: notice.media, title: notice.title },
+      error => { onError('原文已打开，但阅读记录未确认保存：' + (error instanceof Error ? error.message : String(error))) },
+    )
+    setBusy(true)
+    void acknowledgeNotification(base, notice.article_id, requestId).then(() => {
+      onHandled(notice.article_id)
+    }).catch(error => {
+      onError('消息已打开，但确认状态保存失败：' + (error instanceof Error ? error.message : String(error)))
+    }).finally(() => { setBusy(false) })
+  }, [base, notice, onError, onHandled, requestId])
   return (
     <div className={css.messageCard}>
       <div className={css.messageType}>🔔 值得一看</div>
@@ -187,13 +207,10 @@ function NotificationMessage(props: {
       {notice.reason !== '' ? <div className={css.messageBody}>{notice.reason}</div> : null}
       <div className={css.messageActions}>
         <ActionButton
-          label="打开原文"
           primary
-          disabled={notice.original_url === ''}
-          onClick={() => {
-            openItem(base, { content_id: notice.article_id, article_id: notice.article_id, content_url: notice.original_url, media: notice.media, title: notice.title })
-            onHandled(notice.article_id)
-          }}
+          disabled={notice.original_url === '' || busy}
+          label={busy ? '正在确认…' : '打开原文'}
+          onClick={open}
         />
       </div>
     </div>
@@ -232,7 +249,7 @@ export function MessagesDrawer(props: {
           </div>
         ) : null}
         {notifications.map(notice => (
-          <NotificationMessage key={`notif:${notice.article_id}`} base={base} notice={notice} onHandled={onNotificationHandled} />
+          <NotificationMessage key={`notif:${notice.article_id}`} base={base} notice={notice} onHandled={onNotificationHandled} onError={onError} />
         ))}
         {probes.map(notice => (
           <ProbeMessage key={notice.key} base={base} notice={notice} onHandled={onProbeHandled} onError={onError} />
@@ -276,13 +293,20 @@ export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<str
   probes: ProbeNotice[]
   spotlights: SpotlightNotice[]
   notifications: RecommendationNotice[]
+  error: string
+  loaded: { interests: boolean; avoidances: boolean; spotlights: boolean; notification: boolean }
 }> {
-  const [interests, avoidances, spotlights, notification] = await Promise.all([
-    fetchInterestProbes(base).catch(() => []),
-    fetchAvoidanceProbes(base).catch(() => []),
-    fetchSpotlightBatch(base).catch(() => []),
-    fetchPendingNotification(base).catch(() => null),
+  const results = await Promise.allSettled([
+    fetchInterestProbes(base),
+    fetchAvoidanceProbes(base),
+    fetchSpotlightBatch(base),
+    fetchPendingNotification(base),
   ])
+  const interests = results[0].status === 'fulfilled' ? results[0].value : []
+  const avoidances = results[1].status === 'fulfilled' ? results[1].value : []
+  const spotlights = results[2].status === 'fulfilled' ? results[2].value : []
+  const notification = results[3].status === 'fulfilled' ? results[3].value : null
+  const failed = results.filter(result => result.status === 'rejected').length
   const probeNotice = (p: ProbeItem, type: 'interest.probe' | 'avoidance.probe'): ProbeNotice | null => {
     const key = probeKey(type, p.domain)
     if (key === '' || handledProbes.has(key)) return null
@@ -298,5 +322,14 @@ export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<str
     notifications: notification !== null
       ? [{ article_id: notification.article_id, title: notification.title, reason: notification.reason, media: notification.media, original_url: notification.original_url }]
       : [],
+    error: failed === 0 ? '' : failed === results.length
+      ? '消息暂时读取失败，请确认新闻爪后端已启动。'
+      : '部分消息来源读取失败，当前只展示已成功取得的消息。',
+    loaded: {
+      interests: results[0].status === 'fulfilled',
+      avoidances: results[1].status === 'fulfilled',
+      spotlights: results[2].status === 'fulfilled',
+      notification: results[3].status === 'fulfilled',
+    },
   }
 }

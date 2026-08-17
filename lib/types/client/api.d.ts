@@ -317,6 +317,13 @@ export interface RuntimeStatus {
     manual_refresh_state: string;
     [key: string]: unknown;
 }
+/** Durable state of the NewsClaw-only first setup flow. */
+export interface NewsBootstrapStatus {
+    status: string;
+    running: boolean;
+    profile_ready: boolean;
+    detail: string;
+}
 /** Request error carrying the HTTP status and server detail. */
 export declare class ApiError extends Error {
     readonly status: number;
@@ -406,6 +413,8 @@ export declare function fetchPendingNotification(base: string, signal?: AbortSig
     media: string;
     original_url: string;
 } | null>;
+/** POST /api/notifications/ack — durable, idempotent NewsClaw message acknowledgement. */
+export declare function acknowledgeNotification(base: string, articleId: string, requestId: string, signal?: AbortSignal): Promise<void>;
 /** POST /api/spotlight/respond — view/like/dislike/dismiss/chat (stable request_id). */
 export declare function respondToSpotlight(base: string, payload: {
     article_id: string;
@@ -439,7 +448,7 @@ export declare function sendChat(base: string, message: string, signal?: AbortSi
 /** GET /api/chat/turns — durable dialogue history. */
 export declare function fetchChatTurns(base: string, session?: string, signal?: AbortSignal): Promise<ChatTurn[]>;
 /** POST /api/chat/turns — start one durable dialogue turn (returns the pending turn). */
-export declare function startChatTurn(base: string, message: string, session?: string, replyToTurnId?: string, signal?: AbortSignal): Promise<ChatTurn>;
+export declare function startChatTurn(base: string, message: string, session?: string, replyToTurnId?: string, turnId?: string, signal?: AbortSignal): Promise<ChatTurn>;
 /** GET /api/chat/turns/{turn_id} — poll one durable turn until it settles. */
 export declare function fetchChatTurn(base: string, turnId: string, signal?: AbortSignal): Promise<ChatTurn>;
 /** GET /api/chat/pending-confirmations — hypotheses/confusions waiting for the user. */
@@ -506,22 +515,12 @@ export declare function fetchActivityFeed(base: string, opts?: {
 }>;
 /** Generate one stable idempotency key for a UI action (uuid v4). */
 export declare function stableId(): string;
-/** `/api/init-status` response (defensive). */
-export interface InitStatus {
-    initialized: boolean;
-    running: boolean;
-}
 /** Read boot-autostart state. */
 export declare function fetchAutostartStatus(base: string, signal?: AbortSignal): Promise<{
     enabled: boolean;
 }>;
 /** Apply boot-autostart on/off. */
 export declare function applyAutostart(base: string, enabled: boolean, signal?: AbortSignal): Promise<boolean>;
-/** Read init status. */
-export declare function fetchInitStatus(base: string, signal?: AbortSignal): Promise<InitStatus>;
-/** Restart initialization (rebuild profile + discovery pool). */
-export declare function startInit(base: string, payload: {
-    force?: boolean;
-    reset_cognition?: boolean;
-}, signal?: AbortSignal): Promise<void>;
+/** Read the NewsClaw-only first setup status; this endpoint never rebuilds a ready profile. */
+export declare function fetchNewsBootstrapStatus(base: string, signal?: AbortSignal): Promise<NewsBootstrapStatus>;
 //# sourceMappingURL=api.d.ts.map

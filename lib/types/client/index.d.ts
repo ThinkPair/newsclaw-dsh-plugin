@@ -7,8 +7,8 @@
  * `PanelLayoutController` appends one item in the first implicit trailing
  * column and gives it the panel width, so opening the panel PUSHES the
  * center/conversation column instead of overlaying it. It deliberately never
- * rewrites the frame's shared `grid-template-columns`, allowing OpenBiliClaw
- * and other independent side panels to coexist without observer feedback.
+ * rewrites the frame's shared `grid-template-columns`, allowing other
+ * independent side panels to coexist without observer feedback.
  *
  * The only slot registration is the left-sidebar trigger button
  * (`sidebar.footer.action`), which toggles the column. The panel's business
@@ -29,6 +29,7 @@ export interface NewsClawClientConnection {
     apiUrl: string;
     timeoutMs: number;
 }
+export declare function resolveClientConfig(config?: NewsClawClientConfig): NewsClawClientConnection;
 /**
  * Client plugin body: mount the panel column into the frame grid (DOM-level,
  * pushing the center content) plus a left-sidebar toggle button.

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   actOnChatCard, ApiError, fetchChatTurn, fetchChatTurns, fetchPendingConfirmations,
-  openPendingConfirmation, startChatTurn, type ChatTurn, type PendingConfirmation,
+  openPendingConfirmation, stableId, startChatTurn, type ChatTurn, type PendingConfirmation,
 } from './api.ts'
 import { ActionButton, EmptyState, ErrorNote, formatTime } from './views.tsx'
 import css from './panel.module.css'
@@ -229,17 +229,22 @@ export function ChatView(props: { base: string }): React.JSX.Element {
     setContextState(sel)
   }, [])
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const turnIds = useRef(new Map<string, string>())
 
   const reload = useCallback(async () => {
-    try {
-      const [history, pending] = await Promise.all([
-        fetchChatTurns(base, CHAT_SESSION),
-        fetchPendingConfirmations(base),
-      ])
-      setTurns(history)
-      setConfirmations(pending)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+    setError('')
+    const [history, pending] = await Promise.allSettled([
+      fetchChatTurns(base, CHAT_SESSION),
+      fetchPendingConfirmations(base),
+    ])
+    if (history.status === 'fulfilled') setTurns(history.value)
+    if (pending.status === 'fulfilled') setConfirmations(pending.value)
+    if (history.status === 'rejected' && pending.status === 'rejected') {
+      setError('对话与待聊确认都读取失败，请稍后重试。')
+    } else if (history.status === 'rejected') {
+      setError('待聊确认已读取，但对话记录读取失败：' + (history.reason instanceof Error ? history.reason.message : String(history.reason)))
+    } else if (pending.status === 'rejected') {
+      setError('对话记录已读取，但待聊确认读取失败：' + (pending.reason instanceof Error ? pending.reason.message : String(pending.reason)))
     }
   }, [base])
 
@@ -256,8 +261,14 @@ export function ChatView(props: { base: string }): React.JSX.Element {
     if (message === '' || sending) return
     setSending(true)
     setError('')
+    const requestKey = `${context?.turnId ?? ''}:${message}`
+    let turnId = turnIds.current.get(requestKey)
+    if (turnId === undefined) {
+      turnId = `dsh-${stableId()}`
+      turnIds.current.set(requestKey, turnId)
+    }
     const optimistic: ChatTurn = {
-      turn_id: `pending-${Date.now()}`,
+      turn_id: turnId,
       session: CHAT_SESSION,
       scope: 'chat',
       message,
@@ -270,18 +281,20 @@ export function ChatView(props: { base: string }): React.JSX.Element {
     setTurns(prev => [...(prev ?? []), optimistic])
     setDraft('')
     try {
-      const started = await startChatTurn(base, message, CHAT_SESSION, context?.turnId)
+      const started = await startChatTurn(base, message, CHAT_SESSION, context?.turnId, turnId)
       setTurns(prev => [...(prev ?? []).filter(t => t.turn_id !== optimistic.turn_id), started])
       const settled = await waitForTurn(base, started.turn_id)
       setTurns(prev => (prev ?? []).map(t => (t.turn_id === started.turn_id ? settled : t)))
+      turnIds.current.delete(requestKey)
       await reload()
     } catch (err) {
       setTurns(prev => (prev ?? []).filter(t => t.turn_id !== optimistic.turn_id))
+      setDraft(current => current === '' ? message : current)
       const friendly = err instanceof ApiError && err.status === 409
         ? '这条上下文已经失效（卡片可能已结算，或另开了一条讨论）。点「清除」后重发，或回到卡片重新点「聊聊」。'
         : err instanceof Error ? err.message : String(err)
-      setError(friendly)
       await reload().catch(() => undefined)
+      setError(friendly)
     } finally {
       setSending(false)
     }

@@ -94,9 +94,6 @@ export class LiveClient {
     this.#socket = socket
     const openedAt = Date.now()
     socket.onopen = () => {
-      // Only a connection that survives a while resets the backoff; a
-      // quick open/close flap keeps doubling so churn backs off.
-      if (Date.now() - openedAt >= 8_000) this.#reconnectDelay = RECONNECT_BASE_MS
       this.#onStatus?.(true)
     }
     socket.onmessage = (msg: MessageEvent<string>) => {
@@ -105,6 +102,9 @@ export class LiveClient {
     socket.onclose = () => {
       if (this.#socket === socket) this.#socket = null
       this.#onStatus?.(false)
+      // Only a connection that actually stayed healthy resets backoff; a
+      // quick open/close flap keeps doubling so churn remains controlled.
+      if (Date.now() - openedAt >= 8_000) this.#reconnectDelay = RECONNECT_BASE_MS
       this.#scheduleReconnect()
     }
     socket.onerror = () => {

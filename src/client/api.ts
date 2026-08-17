@@ -10,14 +10,16 @@
 /** localStorage key for the API base URL. */
 export const API_BASE_KEY = 'newsclaw.apiBase'
 
+import { DEFAULT_API_URL, normalizeApiUrl } from '../config.ts'
+
 /** Default local backend address. */
-export const DEFAULT_API_BASE = 'http://127.0.0.1:8430'
+export const DEFAULT_API_BASE = DEFAULT_API_URL
 
 /** Read the persisted API base URL (falling back to the default). */
 export function readApiBase(): string {
   try {
     const saved = localStorage.getItem(API_BASE_KEY)
-    if (saved !== null && saved.trim() !== '') return saved.trim().replace(/\/+$/, '')
+    if (saved !== null && saved.trim() !== '') return normalizeApiUrl(saved)
   } catch {
     // localStorage unavailable (private mode etc.) — use the default.
   }
@@ -27,7 +29,7 @@ export function readApiBase(): string {
 /** Persist the API base URL. */
 export function writeApiBase(base: string): void {
   try {
-    localStorage.setItem(API_BASE_KEY, base.trim().replace(/\/+$/, ''))
+    localStorage.setItem(API_BASE_KEY, normalizeApiUrl(base))
   } catch {
     // ignore persistence failures
   }
@@ -288,6 +290,14 @@ export interface RuntimeStatus {
   [key: string]: unknown
 }
 
+/** Durable state of the NewsClaw-only first setup flow. */
+export interface NewsBootstrapStatus {
+  status: string
+  running: boolean
+  profile_ready: boolean
+  detail: string
+}
+
 /**
  * Build a concise human-readable summary from a backend error `detail` so the
  * failure toast shows WHICH field failed validation, not just `failed: 422`.
@@ -333,17 +343,22 @@ export class ApiError extends Error {
 }
 
 /** Minimal timeout helper: AbortController + cleanup. */
-function withTimeout(ms: number, outer?: AbortSignal): { signal?: AbortSignal; cleanup(): void } {
-  if (ms <= 0) return { cleanup() { /* no-op */ } }
+function withTimeout(ms: number, outer?: AbortSignal): { signal?: AbortSignal; timedOut(): boolean; cleanup(): void } {
+  if (ms <= 0) return { timedOut: () => false, cleanup() { /* no-op */ } }
   const controller = new AbortController()
+  let expired = false
   const onOuterAbort = (): void => controller.abort()
   if (outer !== undefined) {
     if (outer.aborted) controller.abort()
     else outer.addEventListener('abort', onOuterAbort, { once: true })
   }
-  const timer = window.setTimeout(() => controller.abort(), ms)
+  const timer = window.setTimeout(() => {
+    expired = true
+    controller.abort()
+  }, ms)
   return {
     signal: controller.signal,
+    timedOut: () => expired,
     cleanup() {
       window.clearTimeout(timer)
       outer?.removeEventListener('abort', onOuterAbort)
@@ -373,6 +388,9 @@ export async function requestJson(
       throw new ApiError(path, res.status, detail)
     }
     return res.json()
+  } catch (error) {
+    if (timeout.timedOut()) throw new Error(`${path} 请求超时（${timeoutMs ?? 15_000}ms），请确认新闻爪后端状态后重试。`)
+    throw error
   } finally {
     timeout.cleanup()
   }
@@ -649,23 +667,31 @@ export async function fetchSpotlightBatch(base: string, signal?: AbortSignal): P
 
 /** GET /api/notifications/pending — one notification-worthy recommendation. */
 export async function fetchPendingNotification(base: string, signal?: AbortSignal): Promise<{ recommendation_id: number; article_id: string; title: string; reason: string; media: string; original_url: string } | null> {
-  try {
-    const data = await requestJson(base, '/api/notifications/pending', { timeoutMs: 8_000, signal })
-    if (typeof data !== 'object' || data === null) return null
-    const row = (data as Record<string, unknown>).item
-    if (typeof row !== 'object' || row === null) return null
-    const item = row as Record<string, unknown>
-    return {
-      recommendation_id: num(item.recommendation_id),
-      article_id: str(item.article_id),
-      title: str(item.title),
-      reason: str(item.reason),
-      media: str(item.media),
-      original_url: firstText(item.original_url, item.content_url),
-    }
-  } catch {
-    return null
+  const data = await requestJson(base, '/api/notifications/pending', { timeoutMs: 8_000, signal })
+  if (typeof data !== 'object' || data === null) return null
+  const row = (data as Record<string, unknown>).item
+  if (typeof row !== 'object' || row === null) return null
+  const item = row as Record<string, unknown>
+  return {
+    recommendation_id: num(item.recommendation_id),
+    article_id: str(item.article_id),
+    title: str(item.title),
+    reason: str(item.reason),
+    media: str(item.media),
+    original_url: firstText(item.original_url, item.content_url),
   }
+}
+
+/** POST /api/notifications/ack — durable, idempotent NewsClaw message acknowledgement. */
+export async function acknowledgeNotification(base: string, articleId: string, requestId: string, signal?: AbortSignal): Promise<void> {
+  const data = await requestJson(base, '/api/notifications/ack', {
+    method: 'POST',
+    body: { article_id: articleId, request_id: requestId },
+    timeoutMs: 10_000,
+    signal,
+  })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  if (row.ok !== true || str(row.article_id) !== articleId) throw new Error('通知确认没有得到后端确认，请稍后重试。')
 }
 
 /** POST /api/spotlight/respond — view/like/dislike/dismiss/chat (stable request_id). */
@@ -743,9 +769,10 @@ export async function fetchChatTurns(base: string, session = 'dsh', signal?: Abo
 }
 
 /** POST /api/chat/turns — start one durable dialogue turn (returns the pending turn). */
-export async function startChatTurn(base: string, message: string, session = 'dsh', replyToTurnId?: string, signal?: AbortSignal): Promise<ChatTurn> {
+export async function startChatTurn(base: string, message: string, session = 'dsh', replyToTurnId?: string, turnId?: string, signal?: AbortSignal): Promise<ChatTurn> {
   const body: Record<string, unknown> = { session, scope: 'chat', message }
   if (replyToTurnId !== undefined && replyToTurnId !== '') body.reply_to_turn_id = replyToTurnId
+  if (turnId !== undefined && turnId !== '') body.turn_id = turnId
   const data = await requestJson(base, '/api/chat/turns', {
     method: 'POST',
     body,
@@ -883,26 +910,22 @@ export async function removeSaved(base: string, listKind: 'favorite' | 'watch_la
 
 /** GET /api/runtime-status — backend readiness and counts. */
 export async function fetchRuntimeStatus(base: string, signal?: AbortSignal): Promise<RuntimeStatus | null> {
-  try {
-    const data = await requestJson(base, '/api/runtime-status', { timeoutMs: 8_000, signal })
-    if (typeof data !== 'object' || data === null) return null
-    const row = data as Record<string, unknown>
-    return {
-      initialized: row.initialized === true,
-      recommendation_count: num(row.recommendation_count),
-      unread_count: num(row.unread_count),
-      last_refresh_at: str(row.last_refresh_at),
-      pool_available_count: num(row.pool_available_count),
-      pool_target_count: num(row.pool_target_count),
-      pool_pending_count: num(row.pool_pending_count),
-      last_replenished_count: num(row.last_replenished_count),
-      last_discovered_count: num(row.last_discovered_count),
-      recent_pool_topics: Array.isArray(row.recent_pool_topics) ? row.recent_pool_topics.map(String) : [],
-      manual_refresh_state: str(row.manual_refresh_state),
-      ...row,
-    }
-  } catch {
-    return null
+  const data = await requestJson(base, '/api/runtime-status', { timeoutMs: 8_000, signal })
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('运行状态返回格式无效。')
+  const row = data as Record<string, unknown>
+  return {
+    initialized: row.initialized === true,
+    recommendation_count: num(row.recommendation_count),
+    unread_count: num(row.unread_count),
+    last_refresh_at: str(row.last_refresh_at),
+    pool_available_count: num(row.pool_available_count),
+    pool_target_count: num(row.pool_target_count),
+    pool_pending_count: num(row.pool_pending_count),
+    last_replenished_count: num(row.last_replenished_count),
+    last_discovered_count: num(row.last_discovered_count),
+    recent_pool_topics: Array.isArray(row.recent_pool_topics) ? row.recent_pool_topics.map(String) : [],
+    manual_refresh_state: str(row.manual_refresh_state),
+    ...row,
   }
 }
 
@@ -974,16 +997,17 @@ function parseNewsRuntime(value: unknown): NewsRuntimeSnapshot {
 /** GET /api/news/runtime — real NewsClaw runtime and effective settings. */
 export async function fetchNewsRuntime(base: string, signal?: AbortSignal): Promise<NewsRuntimeSnapshot> {
   const data = await requestJson(base, '/api/news/runtime', { timeoutMs: 10_000, signal })
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('新闻运行状态返回格式无效。')
   return parseNewsRuntime(data)
 }
 
 /** GET /api/news/sources — real source inventory and source health. */
 export async function fetchNewsSources(base: string, signal?: AbortSignal): Promise<NewsSourcesSnapshot> {
   const data = await requestJson(base, '/api/news/sources', { timeoutMs: 10_000, signal })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  const sources = Array.isArray(row.sources)
-    ? row.sources.map(parseNewsSource).filter((item): item is NewsSourceState => item !== null)
-    : []
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('新闻来源返回格式无效。')
+  const row = data as Record<string, unknown>
+  if (!Array.isArray(row.sources)) throw new Error('新闻来源列表缺失。')
+  const sources = row.sources.map(parseNewsSource).filter((item): item is NewsSourceState => item !== null)
   return {
     sources,
     settings: parseEffectiveSettings(row.settings),
@@ -1052,12 +1076,11 @@ export async function fetchProfileSummary(
   base: string,
   opts: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
 ): Promise<ProfileSummary | null> {
-  try {
     const params = new URLSearchParams()
     params.set('limit', String(opts.limit ?? 5))
     if (opts.cursor !== undefined && opts.cursor !== '') params.set('cursor', opts.cursor)
     const data = await requestJson(base, `/api/profile-summary?${params.toString()}`, { timeoutMs: 10_000, signal: opts.signal })
-    if (typeof data !== 'object' || data === null) return null
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('画像摘要返回格式无效。')
     const row = data as Record<string, unknown>
     const mbti = typeof row.mbti === 'object' && row.mbti !== null ? row.mbti as Record<string, unknown> : {}
     const toDomain = (raw: unknown) => {
@@ -1162,9 +1185,6 @@ export async function fetchProfileSummary(
         }))
         : [],
     }
-  } catch {
-    return null
-  }
 }
 
 /** GET /api/activity-feed — recent activity entries (cursor pagination). */
@@ -1200,17 +1220,13 @@ export function stableId(): string {
 
 // ── settings-page endpoints (mirror the popup's config surface) ──────────
 
-/** `/api/init-status` response (defensive). */
-export interface InitStatus {
-  initialized: boolean
-  running: boolean
-}
-
 /** Read boot-autostart state. */
 export async function fetchAutostartStatus(base: string, signal?: AbortSignal): Promise<{ enabled: boolean }> {
   const data = await requestJson(base, '/api/autostart-status', { timeoutMs: 10_000, signal })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return { enabled: row.enabled === true }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('开机启动状态返回格式无效。')
+  const row = data as Record<string, unknown>
+  if (typeof row.enabled !== 'boolean') throw new Error('开机启动状态缺少 enabled。')
+  return { enabled: row.enabled }
 }
 
 /** Apply boot-autostart on/off. */
@@ -1226,14 +1242,15 @@ export async function applyAutostart(base: string, enabled: boolean, signal?: Ab
   return row.ok === true || row.enabled === enabled
 }
 
-/** Read init status. */
-export async function fetchInitStatus(base: string, signal?: AbortSignal): Promise<InitStatus> {
-  const data = await requestJson(base, '/api/init-status', { timeoutMs: 45_000, signal })
-  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-  return { initialized: row.initialized === true, running: row.running === true }
-}
-
-/** Restart initialization (rebuild profile + discovery pool). */
-export async function startInit(base: string, payload: { force?: boolean; reset_cognition?: boolean }, signal?: AbortSignal): Promise<void> {
-  await requestJson(base, '/api/init', { method: 'POST', timeoutMs: 60_000, signal, body: payload })
+/** Read the NewsClaw-only first setup status; this endpoint never rebuilds a ready profile. */
+export async function fetchNewsBootstrapStatus(base: string, signal?: AbortSignal): Promise<NewsBootstrapStatus> {
+  const data = await requestJson(base, '/api/news/bootstrap/status', { timeoutMs: 10_000, signal })
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('首次设置状态返回格式无效。')
+  const row = data as Record<string, unknown>
+  return {
+    status: firstText(row.status, row.state, 'not_started'),
+    running: row.running === true,
+    profile_ready: row.profile_ready === true,
+    detail: firstText(row.detail, row.error),
+  }
 }
