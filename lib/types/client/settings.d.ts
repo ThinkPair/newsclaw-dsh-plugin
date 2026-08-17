@@ -1,6 +1,6 @@
-export declare function SettingsOverlay({ base, onBaseChange, onClose }: {
+export declare function SettingsOverlay({ base, timeoutMs, onClose }: {
     base: string;
-    onBaseChange: (base: string) => void;
+    timeoutMs: number;
     onClose: () => void;
 }): React.JSX.Element;
 //# sourceMappingURL=settings.d.ts.map

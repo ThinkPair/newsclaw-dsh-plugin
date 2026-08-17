@@ -1,8 +1,9 @@
 /**
  * NewsClaw REST client for the browser half. Talks to the user's local
- * backend directly (CORS is permissive); the base URL is user-configurable
- * and persisted in localStorage. Only user-consumption endpoints are used —
- * nothing crawling/source-management related.
+ * backend directly (CORS is permissive). The Harness row config is the
+ * primary connection source and is mirrored to localStorage for legacy view
+ * fallbacks. Settings reads the dedicated NewsClaw runtime/source contracts;
+ * it never writes the legacy generic config endpoint.
  * @module @newsclaw/dsh-plugin
  */
 
@@ -120,6 +121,58 @@ export interface SourceAvailability {
   state: HealthState | 'unknown'
   last_success_at: string
   error: string
+}
+
+/** Effective scheduler settings returned by the dedicated NewsClaw API. */
+export interface NewsEffectiveSettings {
+  version: number
+  pool_target_count: number
+  refresh_poll_minutes: number
+  hot_refresh_minutes: number
+  exploration_refresh_minutes: number
+  feedback_threshold: number
+  proactive_push: boolean
+  background_llm: boolean
+  browser_close_behavior: string
+  retry_max_attempts: number
+  retry_base_seconds: number
+  retry_max_seconds: number
+}
+
+/** One source row from /api/news/sources (read-only in the DSH panel). */
+export interface NewsSourceState {
+  source_id: string
+  kind: string
+  media: string
+  technical_provider: string
+  enabled: boolean
+  custom: boolean
+  credential_configured: boolean
+  status: string
+  last_success_at: string
+  error: string
+}
+
+/** Runtime state used by the truthful DSH settings summary. */
+export interface NewsRuntimeSnapshot {
+  status: HealthState
+  last_article_count: number
+  last_refresh: string
+  last_refresh_status: string
+  last_schedule_lane: string
+  last_schedule_status: string
+  last_scheduler_check: string
+  profile_ready: boolean
+  refresh_running: boolean
+  bootstrap_running: boolean
+  effective_settings: NewsEffectiveSettings
+}
+
+/** Source inventory plus the effective settings/runtime returned beside it. */
+export interface NewsSourcesSnapshot {
+  sources: NewsSourceState[]
+  settings: NewsEffectiveSettings
+  runtime: NewsRuntimeSnapshot
 }
 
 /** One chat turn. */
@@ -828,18 +881,6 @@ export async function removeSaved(base: string, listKind: 'favorite' | 'watch_la
   await requestJson(base, `/api/saved/${listKind}/remove`, { method: 'POST', body: { item_key: itemKey }, timeoutMs: 10_000, signal })
 }
 
-/** GET /api/config — the full backend config (masked secrets). */
-export async function fetchConfig(base: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const data = await requestJson(base, '/api/config', { timeoutMs: 15_000, signal })
-  return typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
-}
-
-/** PUT /api/config — partial update; only provided fields are modified and
- *  the backend persists + hot-reloads. */
-export async function updateConfig(base: string, partial: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-  return requestJson(base, '/api/config', { method: 'PUT', body: partial, timeoutMs: 30_000, signal })
-}
-
 /** GET /api/runtime-status — backend readiness and counts. */
 export async function fetchRuntimeStatus(base: string, signal?: AbortSignal): Promise<RuntimeStatus | null> {
   try {
@@ -867,6 +908,88 @@ export async function fetchRuntimeStatus(base: string, signal?: AbortSignal): Pr
 
 /** Three-state backend status shared by the DSH, Web and mobile clients. */
 export type HealthState = 'online' | 'degraded' | 'offline'
+
+function parseEffectiveSettings(value: unknown): NewsEffectiveSettings {
+  const row = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+  return {
+    version: num(row.version),
+    pool_target_count: num(row.pool_target_count),
+    refresh_poll_minutes: num(row.refresh_poll_minutes),
+    hot_refresh_minutes: num(row.hot_refresh_minutes),
+    exploration_refresh_minutes: num(row.exploration_refresh_minutes),
+    feedback_threshold: num(row.feedback_threshold),
+    proactive_push: row.proactive_push === true,
+    background_llm: row.background_llm === true,
+    browser_close_behavior: str(row.browser_close_behavior),
+    retry_max_attempts: num(row.retry_max_attempts),
+    retry_base_seconds: num(row.retry_base_seconds),
+    retry_max_seconds: num(row.retry_max_seconds),
+  }
+}
+
+function parseNewsSource(value: unknown): NewsSourceState | null {
+  if (typeof value !== 'object' || value === null) return null
+  const row = value as Record<string, unknown>
+  const health = typeof row.health === 'object' && row.health !== null ? row.health as Record<string, unknown> : {}
+  const sourceId = firstText(row.source_id, row.id)
+  const media = firstText(row.media, row.name, sourceId)
+  if (sourceId === '' && media === '') return null
+  return {
+    source_id: sourceId || media,
+    kind: str(row.kind),
+    media,
+    technical_provider: firstText(row.technical_provider, row.provider),
+    enabled: row.enabled === true,
+    custom: row.custom === true,
+    credential_configured: row.credential_configured === true,
+    status: firstText(row.status, health.status, health.available === true ? 'healthy' : ''),
+    last_success_at: firstText(row.last_success_at, health.last_success_at),
+    error: firstText(row.error, health.error_message, health.error_code),
+  }
+}
+
+function parseNewsRuntime(value: unknown): NewsRuntimeSnapshot {
+  const row = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+  const rawStatus = firstText(row.status, row.last_refresh_status).toLowerCase()
+  const status: HealthState = rawStatus === '' || rawStatus === 'offline'
+    ? 'offline'
+    : rawStatus === 'degraded' || rawStatus === 'partial' || rawStatus === 'error' || rawStatus === 'failed'
+      ? 'degraded'
+      : 'online'
+  return {
+    status,
+    last_article_count: num(row.last_article_count),
+    last_refresh: str(row.last_refresh),
+    last_refresh_status: str(row.last_refresh_status),
+    last_schedule_lane: str(row.last_schedule_lane),
+    last_schedule_status: str(row.last_schedule_status),
+    last_scheduler_check: str(row.last_scheduler_check),
+    profile_ready: row.profile_ready === true,
+    refresh_running: row.refresh_running === true,
+    bootstrap_running: row.bootstrap_running === true,
+    effective_settings: parseEffectiveSettings(row.effective_settings),
+  }
+}
+
+/** GET /api/news/runtime — real NewsClaw runtime and effective settings. */
+export async function fetchNewsRuntime(base: string, signal?: AbortSignal): Promise<NewsRuntimeSnapshot> {
+  const data = await requestJson(base, '/api/news/runtime', { timeoutMs: 10_000, signal })
+  return parseNewsRuntime(data)
+}
+
+/** GET /api/news/sources — real source inventory and source health. */
+export async function fetchNewsSources(base: string, signal?: AbortSignal): Promise<NewsSourcesSnapshot> {
+  const data = await requestJson(base, '/api/news/sources', { timeoutMs: 10_000, signal })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  const sources = Array.isArray(row.sources)
+    ? row.sources.map(parseNewsSource).filter((item): item is NewsSourceState => item !== null)
+    : []
+  return {
+    sources,
+    settings: parseEffectiveSettings(row.settings),
+    runtime: parseNewsRuntime(row.runtime),
+  }
+}
 
 /** GET /api/health — reachability plus partial-source degradation. */
 export async function fetchHealthState(base: string, signal?: AbortSignal): Promise<HealthState> {

@@ -46,6 +46,34 @@ test('all bridge tools use one configured backend endpoint', () => {
   assert.doesNotMatch(entry + bridge, /127\.0\.0\.1:8420/)
 })
 
+test('client and tools resolve the same Harness row connection', () => {
+  const clientEntry = read('src/client/index.ts')
+  const mount = read('src/client/mount.tsx')
+  const panel = read('src/client/NewsClawPanel.tsx')
+  assert.match(clientEntry, /apply\(ctx: ClientContext, config\?: NewsClawClientConfig\)/)
+  assert.match(clientEntry, /apiUrl: config\?\.apiUrl/)
+  assert.match(clientEntry, /timeoutMs: typeof config\?\.timeoutMs/)
+  assert.match(clientEntry, /writeApiBase\(connection\.apiUrl\)/)
+  assert.match(mount, /apiUrl=\{connection\.apiUrl\}/)
+  assert.match(mount, /timeoutMs=\{connection\.timeoutMs\}/)
+  assert.match(panel, /const base = apiUrl/)
+  assert.doesNotMatch(panel, /setBase|readApiBase/)
+})
+
+test('DSH settings read dedicated news truth and never write legacy config', () => {
+  const api = read('src/client/api.ts')
+  const settings = read('src/client/settings.tsx')
+  assert.match(api, /requestJson\(base, '\/api\/news\/runtime'/)
+  assert.match(api, /requestJson\(base, '\/api\/news\/sources'/)
+  assert.doesNotMatch(api + settings, /\/api\/config|fetchConfig|updateConfig/)
+  assert.match(settings, /运行状态/)
+  assert.match(settings, /新闻来源/)
+  assert.match(settings, /插件连接/)
+  assert.match(settings, /完整配置在电脑版/)
+  assert.match(settings, /apiUrl \/ timeoutMs/)
+  assert.doesNotMatch(settings, /保存配置|AI 模型|推荐池规则|探测确认阈值/)
+})
+
 test('panel is a clamped trailing grid column', () => {
   const store = read('src/client/store.ts')
   const layout = read('src/client/layout.ts')

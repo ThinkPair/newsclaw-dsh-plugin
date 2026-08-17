@@ -1,8 +1,9 @@
 /**
  * NewsClaw REST client for the browser half. Talks to the user's local
- * backend directly (CORS is permissive); the base URL is user-configurable
- * and persisted in localStorage. Only user-consumption endpoints are used —
- * nothing crawling/source-management related.
+ * backend directly (CORS is permissive). The Harness row config is the
+ * primary connection source and is mirrored to localStorage for legacy view
+ * fallbacks. Settings reads the dedicated NewsClaw runtime/source contracts;
+ * it never writes the legacy generic config endpoint.
  * @module @newsclaw/dsh-plugin
  */
 /** localStorage key for the API base URL. */
@@ -96,6 +97,54 @@ export interface SourceAvailability {
     state: HealthState | 'unknown';
     last_success_at: string;
     error: string;
+}
+/** Effective scheduler settings returned by the dedicated NewsClaw API. */
+export interface NewsEffectiveSettings {
+    version: number;
+    pool_target_count: number;
+    refresh_poll_minutes: number;
+    hot_refresh_minutes: number;
+    exploration_refresh_minutes: number;
+    feedback_threshold: number;
+    proactive_push: boolean;
+    background_llm: boolean;
+    browser_close_behavior: string;
+    retry_max_attempts: number;
+    retry_base_seconds: number;
+    retry_max_seconds: number;
+}
+/** One source row from /api/news/sources (read-only in the DSH panel). */
+export interface NewsSourceState {
+    source_id: string;
+    kind: string;
+    media: string;
+    technical_provider: string;
+    enabled: boolean;
+    custom: boolean;
+    credential_configured: boolean;
+    status: string;
+    last_success_at: string;
+    error: string;
+}
+/** Runtime state used by the truthful DSH settings summary. */
+export interface NewsRuntimeSnapshot {
+    status: HealthState;
+    last_article_count: number;
+    last_refresh: string;
+    last_refresh_status: string;
+    last_schedule_lane: string;
+    last_schedule_status: string;
+    last_scheduler_check: string;
+    profile_ready: boolean;
+    refresh_running: boolean;
+    bootstrap_running: boolean;
+    effective_settings: NewsEffectiveSettings;
+}
+/** Source inventory plus the effective settings/runtime returned beside it. */
+export interface NewsSourcesSnapshot {
+    sources: NewsSourceState[];
+    settings: NewsEffectiveSettings;
+    runtime: NewsRuntimeSnapshot;
 }
 /** One chat turn. */
 export interface ChatTurn {
@@ -426,15 +475,14 @@ export declare function saveItem(base: string, listKind: 'favorite' | 'watch_lat
 }, signal?: AbortSignal): Promise<void>;
 /** POST /api/saved/{listKind}/remove — remove one membership. */
 export declare function removeSaved(base: string, listKind: 'favorite' | 'watch_later', itemKey: string, signal?: AbortSignal): Promise<void>;
-/** GET /api/config — the full backend config (masked secrets). */
-export declare function fetchConfig(base: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
-/** PUT /api/config — partial update; only provided fields are modified and
- *  the backend persists + hot-reloads. */
-export declare function updateConfig(base: string, partial: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 /** GET /api/runtime-status — backend readiness and counts. */
 export declare function fetchRuntimeStatus(base: string, signal?: AbortSignal): Promise<RuntimeStatus | null>;
 /** Three-state backend status shared by the DSH, Web and mobile clients. */
 export type HealthState = 'online' | 'degraded' | 'offline';
+/** GET /api/news/runtime — real NewsClaw runtime and effective settings. */
+export declare function fetchNewsRuntime(base: string, signal?: AbortSignal): Promise<NewsRuntimeSnapshot>;
+/** GET /api/news/sources — real source inventory and source health. */
+export declare function fetchNewsSources(base: string, signal?: AbortSignal): Promise<NewsSourcesSnapshot>;
 /** GET /api/health — reachability plus partial-source degradation. */
 export declare function fetchHealthState(base: string, signal?: AbortSignal): Promise<HealthState>;
 /** Read source health through the same versioned Agent Bridge as DSH tools. */

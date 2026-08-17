@@ -19,10 +19,20 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 export type { NewsClawPanelProps, NewsClawInjected } from './NewsClawPanel.tsx';
 /** Required services: the slot registry (trigger button) and the shell theme. */
 export declare const inject: string[];
+/** Safe browser-side subset of the same Harness row config used by tools. */
+export interface NewsClawClientConfig {
+    apiUrl?: string;
+    timeoutMs?: number;
+}
+/** Resolved connection shared by every panel surface. */
+export interface NewsClawClientConnection {
+    apiUrl: string;
+    timeoutMs: number;
+}
 /**
  * Client plugin body: mount the panel column into the frame grid (DOM-level,
  * pushing the center content) plus a left-sidebar toggle button.
  * @param ctx - client root context.
  */
-export declare function apply(ctx: ClientContext): void;
+export declare function apply(ctx: ClientContext, config?: NewsClawClientConfig): void;
 //# sourceMappingURL=index.d.ts.map

@@ -7,6 +7,7 @@
  */
 import { createRoot, type Root } from 'react-dom/client'
 import { NewsClawPanel } from './NewsClawPanel.tsx'
+import type { NewsClawClientConnection } from './index.ts'
 import { PANEL_COL_SELECTOR, type PanelLayoutController } from './layout.ts'
 
 /** Theme face the panel follows (host light/dark scheme). */
@@ -42,7 +43,7 @@ function waitForElement(selector: string, onFound: (el: HTMLElement) => void): (
  * @param theme - the shell theme face.
  * @returns a disposer unmounting the tree.
  */
-export function mountPanel(controller: PanelLayoutController, theme: PanelThemeFace): () => void {
+export function mountPanel(controller: PanelLayoutController, theme: PanelThemeFace, connection: NewsClawClientConnection): () => void {
   let root: Root | undefined
   const dispose = waitForElement(PANEL_COL_SELECTOR, (el) => {
     root = createRoot(el)
@@ -51,6 +52,8 @@ export function mountPanel(controller: PanelLayoutController, theme: PanelThemeF
         closePanel={() => { controller.setOpen(false) }}
         isDark={theme.isDark}
         onThemeChange={theme.onThemeChange}
+        apiUrl={connection.apiUrl}
+        timeoutMs={connection.timeoutMs}
       />,
     )
   })

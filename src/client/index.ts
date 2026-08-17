@@ -20,6 +20,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // theme plugin's Context merge (ctx.theme) into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
+import { DEFAULT_API_BASE, writeApiBase } from './api.ts'
 import { createPanelLayoutStore } from './store.ts'
 import { PanelLayoutController } from './layout.ts'
 import { mountPanel, type PanelThemeFace } from './mount.tsx'
@@ -30,12 +31,37 @@ export type { NewsClawPanelProps, NewsClawInjected } from './NewsClawPanel.tsx'
 /** Required services: the slot registry (trigger button) and the shell theme. */
 export const inject = ['slots', 'theme']
 
+/** Safe browser-side subset of the same Harness row config used by tools. */
+export interface NewsClawClientConfig {
+  apiUrl?: string
+  timeoutMs?: number
+}
+
+/** Resolved connection shared by every panel surface. */
+export interface NewsClawClientConnection {
+  apiUrl: string
+  timeoutMs: number
+}
+
+function resolveClientConfig(config?: NewsClawClientConfig): NewsClawClientConnection {
+  return {
+    apiUrl: config?.apiUrl?.trim() !== '' && config?.apiUrl !== undefined
+      ? config.apiUrl.trim().replace(/\/+$/, '')
+      : DEFAULT_API_BASE,
+    timeoutMs: typeof config?.timeoutMs === 'number' && config.timeoutMs > 0 ? config.timeoutMs : 300_000,
+  }
+}
+
 /**
  * Client plugin body: mount the panel column into the frame grid (DOM-level,
  * pushing the center content) plus a left-sidebar toggle button.
  * @param ctx - client root context.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: ClientContext, config?: NewsClawClientConfig): void {
+  const connection = resolveClientConfig(config)
+  // Legacy child views can still fall back to readApiBase(); keep that value
+  // in lockstep with the Harness row instead of maintaining a second setting.
+  writeApiBase(connection.apiUrl)
   const store = createPanelLayoutStore()
   const layout = new PanelLayoutController(store)
   const theme: PanelThemeFace = {
@@ -50,7 +76,7 @@ export function apply(ctx: ClientContext): void {
     const disposers: Array<() => void> = []
     try {
       layout.mount()
-      disposers.push(mountPanel(layout, theme))
+      disposers.push(mountPanel(layout, theme, connection))
     } catch (error) {
       console.error('[newsclaw] panel mount failed:', error)
       for (const dispose of [...disposers].reverse()) dispose()

@@ -1,7 +1,7 @@
 {
   "name": "@newsclaw/dsh-plugin",
   "description": "新闻爪（NewsClaw）DeepSeek Harness 客户端：新闻推荐、惊喜推荐、内容库、画像、对话、消息与 22 个 Agent Bridge 工具。",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
@@ -67,6 +67,8 @@
     "lib/client.js.map",
     "lib/types/**/*.d.ts",
     "skills/newsclaw-adapter/SKILL.md",
+    "docs/settings-contract.md",
+    "docs/CHANGELOG.md",
     "LICENSE",
     "NOTICE",
     "licenses/*.txt"

@@ -5,7 +5,7 @@
  * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchHealthState, readApiBase, type HealthState } from './api.ts'
+import { fetchHealthState, type HealthState } from './api.ts'
 import { BRAND_ICON } from './brandIcon.ts'
 import { LiveClient, type LiveEvent } from './live.ts'
 import { ActivityFooter, RecommendView } from './views.tsx'
@@ -28,6 +28,10 @@ export interface NewsClawInjected {
   isDark: () => boolean
   /** Subscribe to shell theme changes. Returns the unsubscriber. */
   onThemeChange: (listener: (dark: boolean) => void) => () => void
+  /** Resolved Harness plugin-row API URL, shared with Agent tools. */
+  apiUrl: string
+  /** Resolved Agent Bridge per-command timeout, displayed read-only. */
+  timeoutMs: number
 }
 
 /** Panel props: the business face passed by the DOM mount (close + theme). */
@@ -47,10 +51,10 @@ const TABS: Array<{ key: TabKey; label: string; icon: (props: { size?: number })
  * The panel column body: NewsClaw user-consumption panel.
  * @param props - injected actions (close + theme).
  */
-export function NewsClawPanel({ closePanel, isDark, onThemeChange }: NewsClawPanelProps): React.JSX.Element {
+export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeoutMs }: NewsClawPanelProps): React.JSX.Element {
   const [dark, setDark] = useState(() => isDark())
   useEffect(() => onThemeChange(setDark), [onThemeChange])
-  const [base, setBase] = useState(() => readApiBase())
+  const base = apiUrl
   const [connection, setConnection] = useState<HealthState>('offline')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -225,7 +229,7 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange }: NewsClawPan
         </button>
       </div>
       {settingsOpen ? (
-        <SettingsOverlay base={base} onBaseChange={next => setBase(next)} onClose={() => setSettingsOpen(false)} />
+        <SettingsOverlay base={base} timeoutMs={timeoutMs} onClose={() => setSettingsOpen(false)} />
       ) : null}
       <div className={css.tabBar}>
         {TABS.map(item => {
