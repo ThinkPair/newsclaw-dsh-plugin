@@ -1,0 +1,20 @@
+NewsClaw DSH Plugin
+
+NewsClaw-specific modifications:
+Copyright (c) 2026 NewsClaw Contributors
+
+This project is a news-domain derivative of the OpenBiliClaw DSH Plugin and
+OpenBiliClaw. The derivative keeps the original user-interface structure and
+agent-bridge design while replacing video-platform semantics with local news
+recommendation semantics.
+
+OpenBiliClaw DSH Plugin portions:
+Copyright (c) 2026, OpenBiliClaw DSH Plugin Contributors
+Licensed under the BSD 3-Clause License in LICENSE.
+Upstream: https://github.com/whiteguo233/dsh-openbiliclaw
+Local adaptation baseline: version 0.3.204 (snapshot commit 4ddd83eb7f370598258aabc7283b0061a24b74f6).
+
+OpenBiliClaw portions:
+Copyright (c) 2026 OpenBiliClaw Contributors
+Licensed under the MIT License in licenses/OpenBiliClaw-MIT.txt.
+Upstream: https://github.com/whiteguo233/OpenBiliClaw

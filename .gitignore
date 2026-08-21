@@ -1,0 +1,21 @@
+node_modules/
+.DS_Store
+*.log
+*.tsbuildinfo
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Test, package, editor, and scratch artifacts
+coverage/
+*.tgz
+.idea/
+.vscode/
+.cache/
+.tmp/
