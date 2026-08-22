@@ -1,7 +1,7 @@
 # DSH 控件与 Agent 工具闭环矩阵
 
 > 审计基线：`31cc0c257453eb59d4d9ab9a705e6cadd517a5be`  
-> 目标：每个可见操作和 22 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
+> 目标：每个可见操作和 24 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
 
 ## 公共合同
 
@@ -72,7 +72,7 @@
 | 开机自启动 | `POST /api/autostart/apply` → 必须 `GET /api/autostart-status` 复核 | OS 自启动项 | 只有 apply=true 且复核值一致才显示成功 | 15s+10s；失败再读真实值；无法复核时标记未知并禁用，不误显示关闭 |
 | 打开新闻爪电脑版 | `window.open(<apiUrl>/web)` | 无额外配置副本 | 进入主配置中心 | DSH 仍保留只读已生效值；不写旧 `/api/config` |
 
-## 22 个 Agent Bridge 工具
+## 24 个 Agent Bridge 工具
 
 所有工具都由 `registerBridgeTools` 注册，再由 `Bridge.run(command, argv)` 调用 `POST <apiUrl>/api/agent-bridge`。工具超时是 Harness 插件行的 `timeoutMs`（1秒–15 分钟夹取，默认 5 分钟）。客户端不自动重放；读操作可重试，写操作必须复用原稳定 ID。
 
@@ -100,10 +100,12 @@
 | 20 | `newsclaw_save_local` | `save-local`；favorite/watch_later 本地成员关系 | 本地数据库写入，不同步媒体账号 | 列表枚举本地校验；超时后先 list_saved 确认再决定重试 |
 | 21 | `newsclaw_remove_saved` | `remove-saved`；移除本地成员关系 | 本地数据库更新 | 列表枚举本地校验；超时后先 list_saved 确认 |
 | 22 | `newsclaw_list_saved` | `list-saved`；只读 favorite/watch_later | 返回 1–200 条 | 可直接重试 |
+| 23 | `newsclaw_search_web` | `research-search --query ... --topic ... --max-results ...`；后端固定 `basic`，不请求 answer/raw content/images | 返回默认 5、最多 8 条带 URL 的有限公开网页结果；可复用后端缓存 | query 必填；topic/time range 本地枚举；不得发送私人画像、本地笔记或秘密；失败不伪装为无结果，默认可重试且不加 `refresh` |
+| 24 | `newsclaw_extract_evidence` | `research-extract --query ... --url ...`；后端固定 `basic`，只提取相关证据段 | 从 1–3 个公开 URL 各返回默认 2、最多 3 个相关片段 | query 必填；URL 数量及公开 HTTP(S) 边界本地校验；不得发送私网 URL 或私人本地上下文；超时可先用原参数重试且不加 `refresh` |
 
 ## 加载、卸载与隔离
 
-- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 22 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
+- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 24 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
 - 浏览器端面板、入口按钮和布局任一步失败，会回收已建立的一切；异常仅记录在控制台，Harness 主界面继续使用。
 - 卸载会关闭 WebSocket，移除 DOM 列/拖动柄/入口，取消订阅并注销 Skill/工具。
 - CSS 热加载采用同 ID upsert，替换内容而不叠加旧样式。
@@ -112,5 +114,6 @@
 
 - DSH 是共享后端的消费端；AI 路由、密钥、新闻源开关/RSS、刷新和重试参数统一到电脑版编辑，DSH 只读真实已生效值。
 - DSH 不执行首次设置或画像重建；它只显示首次设置/失败重试状态，已有画像去电脑版手工校正。
-- 不抓网页、不读 Cookie、不连券商、不下单；只根据已取得的正文等级工作。
+- 日常推荐链不抓网页、不读 Cookie、不连券商、不下单；两项按需研究工具只把去标识化的公开查询/URL 交给后端研究提供方，并且返回有限结果或相关证据段。
+- 私人画像、本地笔记/记忆、家庭/健康/财务细节、凭据、秘密、私网 URL 和未公开材料不得进入联网研究参数；Tavily 密钥只由后端配置，DSH 工具不提供密钥参数。
 - 源包保留必要的 MIT/BSD 法律归属文件；产品 UI、Agent 工具名、日常逻辑和业务文案不使用视频平台语义。

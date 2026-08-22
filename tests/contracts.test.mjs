@@ -7,7 +7,7 @@ import { transform } from 'lightningcss'
 const root = process.cwd()
 const read = (path) => readFileSync(join(root, path), 'utf8')
 
-test('registers the exact 22 NewsClaw bridge tool names', () => {
+test('registers the exact 24 NewsClaw bridge tool names', () => {
   const source = read('src/tools.ts')
   const names = [...source.matchAll(/name:\s*'(newsclaw_[^']+)'/g)].map(match => match[1])
   const expected = [
@@ -33,10 +33,23 @@ test('registers the exact 22 NewsClaw bridge tool names', () => {
     'newsclaw_save_local',
     'newsclaw_remove_saved',
     'newsclaw_list_saved',
+    'newsclaw_search_web',
+    'newsclaw_extract_evidence',
   ]
   assert.deepEqual(names, expected)
-  assert.equal(new Set(names).size, 22)
+  assert.equal(new Set(names).size, 24)
   assert.doesNotMatch(source, /openbiliclaw_|\bbvid\b|bilibili|danmaku/i)
+})
+
+test('web research tools expose bounded public evidence without private context or credentials', () => {
+  const tools = read('src/tools.ts')
+  const skill = read('skills/newsclaw-adapter/SKILL.md')
+  assert.match(tools, /newsclaw_search_web[\s\S]+research-search/)
+  assert.match(tools, /newsclaw_extract_evidence[\s\S]+research-extract/)
+  assert.match(tools, /NEVER send the user\\?'s private profile, local notes or memory/)
+  assert.match(skill, /Web research crosses the local-device boundary/)
+  assert.match(skill, /at most\s+3 public URLs/)
+  assert.doesNotMatch(tools, /apiKey:\s*|api_key:\s*|--api-key/)
 })
 
 test('all bridge tools use one configured backend endpoint', () => {

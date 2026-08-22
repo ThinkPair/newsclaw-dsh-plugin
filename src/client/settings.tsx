@@ -171,7 +171,7 @@ function ConnectionView({ base, timeoutMs, autostart, onAutostart }: {
         <span>Agent 工具单次总超时</span>
         <code>{timeoutMs} ms（{Math.round(timeoutMs / 1000)} 秒）</code>
       </div>
-      <p className={css.settingsHint}>这两个值来自 Harness 插件行的 apiUrl / timeoutMs。面板启动时会把同一个 apiUrl 镜像给全部界面请求，22 个 Agent Bridge 工具也使用该地址，避免两套连接漂移。</p>
+      <p className={css.settingsHint}>这两个值来自 Harness 插件行的 apiUrl / timeoutMs。面板启动时会把同一个 apiUrl 镜像给全部界面请求，24 个 Agent Bridge 工具也使用该地址，避免两套连接漂移。</p>
       <p className={css.settingsHint}>修改它们需要编辑 DSH 插件配置并重新加载插件；这里保持只读，防止只改右侧栏却没有改 Agent 工具。</p>
     </Section>
     <Section title="本机启动">
@@ -187,7 +187,7 @@ function ConnectionView({ base, timeoutMs, autostart, onAutostart }: {
       <p className={css.settingsHint}>该开关直接调用新闻爪的本机自启动接口，是本页唯一会改动后端状态的项目。</p>
     </Section>
     <Section title="隐私与边界">
-      <p className={css.settingsHint}>页面不会读取或回显 DeepSeek、Tushare 等 Token。插件只连接本机新闻爪，不抓网页、不读取新闻网站 Cookie，也不连接券商或执行交易。</p>
+      <p className={css.settingsHint}>页面不会读取或回显 DeepSeek、Tushare、Tavily 等 Token。日常推荐不抓网页，也不读取新闻网站 Cookie；联网研究只发送脱敏的公开查询或 URL，Tavily 密钥由新闻爪后端统一管理。插件不连接券商，也不执行交易。</p>
     </Section>
   </>
 }

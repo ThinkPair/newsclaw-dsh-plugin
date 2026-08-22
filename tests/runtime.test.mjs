@@ -20,7 +20,7 @@ test('shared row config accepts only loopback HTTP(S) bases and finite budgets',
   assert.equal(resolveConfig({ skillPath: 123 }).skillPath instanceof URL, true)
 })
 
-test('all 22 definitions execute the exact adapter command', async () => {
+test('all 24 definitions execute the exact adapter command', async () => {
   const definitions = []
   const calls = []
   const bridge = {
@@ -51,8 +51,10 @@ test('all 22 definitions execute the exact adapter command', async () => {
     ['newsclaw_save_local', { listKind: 'favorite', articleId: 'article-1' }, 'save-local'],
     ['newsclaw_remove_saved', { listKind: 'favorite', articleId: 'article-1' }, 'remove-saved'],
     ['newsclaw_list_saved', { listKind: 'watch_later' }, 'list-saved'],
+    ['newsclaw_search_web', { query: 'latest public AI policy' }, 'research-search'],
+    ['newsclaw_extract_evidence', { query: 'What changed?', urls: ['https://example.com/report'] }, 'research-extract'],
   ]
-  assert.equal(definitions.length, 22)
+  assert.equal(definitions.length, 24)
   for (const [name, args, command] of cases) {
     const definition = definitions.find(item => item.name === name)
     assert.ok(definition, `${name} missing`)
@@ -60,6 +62,37 @@ test('all 22 definitions execute the exact adapter command', async () => {
     assert.equal(calls.at(-1).command, command)
   }
   assert.deepEqual(calls.find(call => call.command === 'chat').argv, ['--message', '你好', '--turn-id', 'turn-1'])
+  assert.deepEqual(calls.find(call => call.command === 'research-search').argv, [
+    '--query', 'latest public AI policy', '--topic', 'general', '--max-results', '5',
+  ])
+  assert.deepEqual(calls.find(call => call.command === 'research-extract').argv, [
+    '--query', 'What changed?', '--url', 'https://example.com/report', '--chunks-per-source', '2',
+  ])
+
+  await definitions.find(item => item.name === 'newsclaw_search_web').execute({
+    query: 'market update', topic: 'finance', timeRange: 'day', maxResults: 99, refresh: true,
+  })
+  assert.deepEqual(calls.at(-1), {
+    command: 'research-search',
+    argv: ['--query', 'market update', '--topic', 'finance', '--max-results', '8', '--time-range', 'day', '--refresh'],
+  })
+
+  await definitions.find(item => item.name === 'newsclaw_extract_evidence').execute({
+    query: 'Find the primary claim',
+    urls: ['https://example.com/a', 'https://example.org/b'],
+    chunksPerSource: 99,
+    refresh: true,
+  })
+  assert.deepEqual(calls.at(-1), {
+    command: 'research-extract',
+    argv: [
+      '--query', 'Find the primary claim',
+      '--url', 'https://example.com/a',
+      '--url', 'https://example.org/b',
+      '--chunks-per-source', '3',
+      '--refresh',
+    ],
+  })
 })
 
 test('bridge tool registration rolls back every prior tool on a partial failure', () => {
@@ -94,6 +127,15 @@ test('tool input validation blocks unsupported or ambiguous writes locally', asy
   await assert.rejects(byName('newsclaw_chat').execute({ message: '你好', turnId: 'x'.repeat(401) }), /turnId must be at most 400/)
   await assert.rejects(byName('newsclaw_list_saved').execute({ listKind: 'external' }), /must be one of/)
   await assert.rejects(byName('newsclaw_respond_interest_probe').execute({ domain: 'x', response: 'confirm', requestId: 'x'.repeat(401) }), /at most 400/)
+  await assert.rejects(byName('newsclaw_search_web').execute({}), /(?:query is required|missing required property "query")/)
+  await assert.rejects(byName('newsclaw_search_web').execute({ query: 'x', topic: 'private' }), /must be one of/)
+  await assert.rejects(byName('newsclaw_search_web').execute({ query: 'x', timeRange: 'hour' }), /must be one of/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: [] }), /between 1 and 3/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: [
+    'https://example.com/1', 'https://example.com/2', 'https://example.com/3', 'https://example.com/4',
+  ] }), /between 1 and 3/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['http://127.0.0.1/private'] }), /public web page/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['file:///private-note.md'] }), /public http\(s\) URL/)
 })
 
 test('HTTP bridge redacts credentials and reports actionable timeouts', async t => {
