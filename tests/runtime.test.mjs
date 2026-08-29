@@ -20,7 +20,7 @@ test('shared row config accepts only loopback HTTP(S) bases and finite budgets',
   assert.equal(resolveConfig({ skillPath: 123 }).skillPath instanceof URL, true)
 })
 
-test('all 22 definitions execute the exact adapter command', async () => {
+test('all 29 definitions execute the exact adapter command', async () => {
   const definitions = []
   const calls = []
   const bridge = {
@@ -51,8 +51,15 @@ test('all 22 definitions execute the exact adapter command', async () => {
     ['newsclaw_save_local', { listKind: 'favorite', articleId: 'article-1' }, 'save-local'],
     ['newsclaw_remove_saved', { listKind: 'favorite', articleId: 'article-1' }, 'remove-saved'],
     ['newsclaw_list_saved', { listKind: 'watch_later' }, 'list-saved'],
+    ['newsclaw_list_web_monitors', {}, 'web-monitor-list'],
+    ['newsclaw_add_web_monitor', { url: 'https://example.com/policy', requestId: 'monitor-add-1' }, 'web-monitor-add'],
+    ['newsclaw_check_web_monitor', { monitorId: 'monitor-1', requestId: 'monitor-check-1' }, 'web-monitor-check'],
+    ['newsclaw_set_web_monitor_state', { monitorId: 'monitor-1', action: 'pause' }, 'web-monitor-set-state'],
+    ['newsclaw_get_web_monitor_history', { monitorId: 'monitor-1' }, 'web-monitor-history'],
+    ['newsclaw_list_monitor_notifications', {}, 'web-monitor-notifications'],
+    ['newsclaw_act_on_monitor_notification', { deliveryId: 'notice-1', action: 'read', requestId: 'notice-read-1' }, 'web-monitor-notification-action'],
   ]
-  assert.equal(definitions.length, 22)
+  assert.equal(definitions.length, 29)
   for (const [name, args, command] of cases) {
     const definition = definitions.find(item => item.name === name)
     assert.ok(definition, `${name} missing`)
@@ -94,6 +101,9 @@ test('tool input validation blocks unsupported or ambiguous writes locally', asy
   await assert.rejects(byName('newsclaw_chat').execute({ message: '你好', turnId: 'x'.repeat(401) }), /turnId must be at most 400/)
   await assert.rejects(byName('newsclaw_list_saved').execute({ listKind: 'external' }), /must be one of/)
   await assert.rejects(byName('newsclaw_respond_interest_probe').execute({ domain: 'x', response: 'confirm', requestId: 'x'.repeat(401) }), /at most 400/)
+  await assert.rejects(byName('newsclaw_add_web_monitor').execute({ url: 'https://example.com', requestId: 'x', intervalMinutes: 2 }), /between 5 and 10080/)
+  await assert.rejects(byName('newsclaw_set_web_monitor_state').execute({ monitorId: 'm', action: 'delete-forever' }), /must be one of/)
+  await assert.rejects(byName('newsclaw_act_on_monitor_notification').execute({ deliveryId: 'n', action: 'read' }), /requestId is required|missing required property "requestId"/)
 })
 
 test('HTTP bridge redacts credentials and reports actionable timeouts', async t => {

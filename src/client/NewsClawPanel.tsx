@@ -5,7 +5,10 @@
  * @module @newsclaw/dsh-plugin
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchHealthState, type HealthState } from './api.ts'
+import {
+  actOnWebMonitorNotification, fetchHealthState, fetchWebMonitorNotifications,
+  type HealthState, type WebMonitorNotification,
+} from './api.ts'
 import { BRAND_ICON } from './brandIcon.ts'
 import { LiveClient, type LiveEvent } from './live.ts'
 import { ActivityFooter, RecommendView } from './views.tsx'
@@ -64,8 +67,15 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
   const [probes, setProbes] = useState<ProbeNotice[]>([])
   const [spotlights, setSpotlights] = useState<SpotlightNotice[]>([])
   const [notifications, setNotifications] = useState<RecommendationNotice[]>([])
+  const [monitorNotifications, setMonitorNotifications] = useState<WebMonitorNotification[]>([])
   const [drawerError, setDrawerError] = useState('')
   const handledProbes = useRef<Set<string>>(new Set())
+  const handledMonitorNotifications = useRef<Set<string>>(new Set())
+  const monitorNotificationGeneration = useRef(0)
+  const commitMonitorNotifications = useCallback((items: WebMonitorNotification[], generation: number) => {
+    if (generation !== monitorNotificationGeneration.current) return
+    setMonitorNotifications(items.filter(item => !handledMonitorNotifications.current.has(item.delivery_id)))
+  }, [])
   const probeRef = useRef<ProbeNotice[]>([])
   probeRef.current = probes
   const spotlightRef = useRef<SpotlightNotice[]>([])
@@ -99,17 +109,55 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
   // Hydrate persisted notifications on mount (badge eager-load, like the mobile shell).
   useEffect(() => {
     let cancelled = false
+    const generation = ++monitorNotificationGeneration.current
     void hydrateDrawer(base, handledProbes.current).then(result => {
       if (cancelled) return
       setProbes(result.probes)
       if (result.loaded.spotlights) setSpotlights(result.spotlights)
       if (result.loaded.notification) setNotifications(result.notifications)
+      if (result.loaded.monitorNotifications) commitMonitorNotifications(result.monitorNotifications, generation)
       setDrawerError(result.error)
     }).catch(error => {
       if (!cancelled) setDrawerError(error instanceof Error ? error.message : String(error))
     })
-    return () => { cancelled = true }
-  }, [base])
+    return () => {
+      cancelled = true
+      monitorNotificationGeneration.current += 1
+    }
+  }, [base, commitMonitorNotifications])
+
+  // P5 notifications are durable database rows rather than transient stream
+  // events. Poll only while this local panel is visible; deterministic
+  // delivery request ids make reconnects safe.
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async (): Promise<void> => {
+      if (document.visibilityState === 'hidden') return
+      const generation = ++monitorNotificationGeneration.current
+      try {
+        const result = await fetchWebMonitorNotifications(base)
+        if (cancelled) return
+        commitMonitorNotifications(result.items, generation)
+        await Promise.allSettled(result.items.map(item => actOnWebMonitorNotification(
+          base,
+          item.delivery_id,
+          'delivered',
+          `dsh:monitor:delivered:${item.delivery_id}`,
+        )))
+      } catch {
+        // The health probe and drawer surface the actionable failure; a badge
+        // poll must never take the host panel down.
+      }
+    }
+    const onVisibility = (): void => { if (document.visibilityState === 'visible') void refresh() }
+    const timer = window.setInterval(() => { void refresh() }, 60_000)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [base, commitMonitorNotifications])
 
   // Live stream: probe/spotlight notifications + tab badges.
   const [liveTick, setLiveTick] = useState(0)
@@ -187,15 +235,17 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
   const openDrawer = useCallback(() => {
     setDrawerOpen(true)
     setDrawerError('')
+    const generation = ++monitorNotificationGeneration.current
     void hydrateDrawer(base, handledProbes.current).then(result => {
       setProbes(prev => mergeProbes(prev, result.probes))
       if (result.loaded.spotlights) setSpotlights(result.spotlights)
       if (result.loaded.notification) setNotifications(result.notifications)
+      if (result.loaded.monitorNotifications) commitMonitorNotifications(result.monitorNotifications, generation)
       setDrawerError(result.error)
     }).catch(error => {
       setDrawerError(error instanceof Error ? error.message : String(error))
     })
-  }, [base])
+  }, [base, commitMonitorNotifications])
 
   const onProbeHandled = useCallback((key: string) => {
     handledProbes.current.add(key)
@@ -210,7 +260,13 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
     setNotifications(prev => prev.filter(n => n.article_id !== article_id))
   }, [])
 
-  const messageCount = probes.length + spotlights.length + notifications.length
+  const onMonitorNotificationHandled = useCallback((deliveryId: string) => {
+    handledMonitorNotifications.current.add(deliveryId)
+    monitorNotificationGeneration.current += 1
+    setMonitorNotifications(prev => prev.filter(n => n.delivery_id !== deliveryId))
+  }, [])
+
+  const messageCount = probes.length + spotlights.length + notifications.length + monitorNotifications.length
 
   return (
     <div className={css.panel} data-dark={dark}>
@@ -275,10 +331,12 @@ export function NewsClawPanel({ closePanel, isDark, onThemeChange, apiUrl, timeo
           probes={probes}
           spotlights={spotlights}
           notifications={notifications}
+          monitorNotifications={monitorNotifications}
           onClose={() => setDrawerOpen(false)}
           onProbeHandled={onProbeHandled}
           onSpotlightHandled={onSpotlightHandled}
           onNotificationHandled={onNotificationHandled}
+          onMonitorNotificationHandled={onMonitorNotificationHandled}
           onError={setDrawerError}
         />
       ) : null}

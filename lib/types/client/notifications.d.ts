@@ -1,4 +1,4 @@
-import { type SpotlightItem } from './api.ts';
+import { type SpotlightItem, type WebMonitorNotification } from './api.ts';
 /** One probe notification row (interest/avoidance/challenge). */
 export interface ProbeNotice {
     key: string;
@@ -35,25 +35,29 @@ export declare function MessagesDrawer(props: {
     probes: ProbeNotice[];
     spotlights: SpotlightNotice[];
     notifications: RecommendationNotice[];
+    monitorNotifications: WebMonitorNotification[];
     onClose: () => void;
     onProbeHandled: (key: string) => void;
     onSpotlightHandled: (article_id: string) => void;
     onNotificationHandled: (article_id: string) => void;
+    onMonitorNotificationHandled: (deliveryId: string) => void;
     onError: (text: string) => void;
 }): React.JSX.Element;
 /** Build a spotlight notice from a spotlight payload. */
 export declare function toSpotlightNotice(item: SpotlightItem): SpotlightNotice;
-/** Hydrate the drawer from the REST surfaces (probes + spotlights + notification). */
+/** Hydrate the drawer from every durable local message surface. */
 export declare function hydrateDrawer(base: string, handledProbes: ReadonlySet<string>): Promise<{
     probes: ProbeNotice[];
     spotlights: SpotlightNotice[];
     notifications: RecommendationNotice[];
+    monitorNotifications: WebMonitorNotification[];
     error: string;
     loaded: {
         interests: boolean;
         avoidances: boolean;
         spotlights: boolean;
         notification: boolean;
+        monitorNotifications: boolean;
     };
 }>;
 //# sourceMappingURL=notifications.d.ts.map

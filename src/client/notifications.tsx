@@ -7,9 +7,9 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  acknowledgeNotification, fetchAvoidanceProbes, fetchSpotlightBatch, fetchInterestProbes, fetchPendingNotification,
+  acknowledgeNotification, actOnWebMonitorNotification, fetchAvoidanceProbes, fetchSpotlightBatch, fetchInterestProbes, fetchPendingNotification, fetchWebMonitorNotifications,
   respondAvoidanceProbe, respondInterestProbe, respondToSpotlight,
-  stableId, type SpotlightItem, type ProbeItem,
+  stableId, type SpotlightItem, type ProbeItem, type WebMonitorNotification,
 } from './api.ts'
 import { ActionButton, openItem } from './views.tsx'
 import { MessageIcon, CloseIcon, SearchIcon } from './icons.tsx'
@@ -217,20 +217,67 @@ function NotificationMessage(props: {
   )
 }
 
+/** One objective webpage/PDF change or delivery-failure notification. */
+function MonitorNotificationMessage(props: {
+  base: string
+  notice: WebMonitorNotification
+  onHandled: (deliveryId: string) => void
+  onError: (text: string) => void
+}): React.JSX.Element {
+  const { base, notice, onHandled, onError } = props
+  const [busy, setBusy] = useState('')
+  const [requestIds] = useState(() => ({ read: stableId(), dismiss: stableId() }))
+  const act = useCallback(async (action: 'read' | 'dismiss', open = false) => {
+    const pendingWindow = open ? window.open('about:blank', '_blank') : null
+    if (pendingWindow !== null) pendingWindow.opener = null
+    setBusy(action)
+    try {
+      await actOnWebMonitorNotification(base, notice.delivery_id, action, requestIds[action])
+      onHandled(notice.delivery_id)
+      if (open) {
+        const monitorUrl = `${base}/web/#library/monitoring`
+        if (pendingWindow !== null) pendingWindow.location.replace(monitorUrl)
+        else window.open(monitorUrl, '_blank', 'noopener')
+      }
+    } catch (error) {
+      if (pendingWindow !== null) pendingWindow.close()
+      onError(error instanceof Error ? error.message : String(error))
+    } finally { setBusy('') }
+  }, [base, notice.delivery_id, onError, onHandled, requestIds])
+  const typeLabel = notice.kind === 'failure'
+    ? '⚠️ 监控需要处理'
+    : notice.kind === 'recovered'
+      ? '✓ 监控恢复正常'
+      : '↗ 正文发生变化'
+  return (
+    <div className={css.messageCard} data-tone={notice.kind === 'failure' ? 'avoidance' : 'interest'}>
+      <div className={css.messageType}>{typeLabel}</div>
+      <div className={css.messageTitle}>{notice.title || notice.label || notice.display_url}</div>
+      {notice.body !== '' ? <div className={css.messageBody}>{notice.body}</div> : null}
+      <div className={css.messageActions}>
+        <ActionButton primary disabled={busy !== ''} label={busy === 'read' ? '正在确认…' : '查看监控'} onClick={() => void act('read', true)} />
+        <ActionButton disabled={busy !== ''} label="忽略" onClick={() => void act('dismiss')} />
+      </div>
+    </div>
+  )
+}
+
 /** The messages drawer (bell overlay). */
 export function MessagesDrawer(props: {
   base: string
   probes: ProbeNotice[]
   spotlights: SpotlightNotice[]
   notifications: RecommendationNotice[]
+  monitorNotifications: WebMonitorNotification[]
   onClose: () => void
   onProbeHandled: (key: string) => void
   onSpotlightHandled: (article_id: string) => void
   onNotificationHandled: (article_id: string) => void
+  onMonitorNotificationHandled: (deliveryId: string) => void
   onError: (text: string) => void
 }): React.JSX.Element {
-  const { base, probes, spotlights, notifications, onClose, onProbeHandled, onSpotlightHandled, onNotificationHandled, onError } = props
-  const isEmpty = probes.length === 0 && spotlights.length === 0 && notifications.length === 0
+  const { base, probes, spotlights, notifications, monitorNotifications, onClose, onProbeHandled, onSpotlightHandled, onNotificationHandled, onMonitorNotificationHandled, onError } = props
+  const isEmpty = probes.length === 0 && spotlights.length === 0 && notifications.length === 0 && monitorNotifications.length === 0
 
   return (
     <div className={css.drawerOverlay} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -250,6 +297,9 @@ export function MessagesDrawer(props: {
         ) : null}
         {notifications.map(notice => (
           <NotificationMessage key={`notif:${notice.article_id}`} base={base} notice={notice} onHandled={onNotificationHandled} onError={onError} />
+        ))}
+        {monitorNotifications.map(notice => (
+          <MonitorNotificationMessage key={`monitor:${notice.delivery_id}`} base={base} notice={notice} onHandled={onMonitorNotificationHandled} onError={onError} />
         ))}
         {probes.map(notice => (
           <ProbeMessage key={notice.key} base={base} notice={notice} onHandled={onProbeHandled} onError={onError} />
@@ -288,24 +338,33 @@ export function toSpotlightNotice(item: SpotlightItem): SpotlightNotice {
   }
 }
 
-/** Hydrate the drawer from the REST surfaces (probes + spotlights + notification). */
+/** Hydrate the drawer from every durable local message surface. */
 export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<string>): Promise<{
   probes: ProbeNotice[]
   spotlights: SpotlightNotice[]
   notifications: RecommendationNotice[]
+  monitorNotifications: WebMonitorNotification[]
   error: string
-  loaded: { interests: boolean; avoidances: boolean; spotlights: boolean; notification: boolean }
+  loaded: { interests: boolean; avoidances: boolean; spotlights: boolean; notification: boolean; monitorNotifications: boolean }
 }> {
   const results = await Promise.allSettled([
     fetchInterestProbes(base),
     fetchAvoidanceProbes(base),
     fetchSpotlightBatch(base),
     fetchPendingNotification(base),
+    fetchWebMonitorNotifications(base),
   ])
   const interests = results[0].status === 'fulfilled' ? results[0].value : []
   const avoidances = results[1].status === 'fulfilled' ? results[1].value : []
   const spotlights = results[2].status === 'fulfilled' ? results[2].value : []
   const notification = results[3].status === 'fulfilled' ? results[3].value : null
+  const monitorNotifications = results[4].status === 'fulfilled' ? results[4].value.items : []
+  await Promise.allSettled(monitorNotifications.map(item => actOnWebMonitorNotification(
+    base,
+    item.delivery_id,
+    'delivered',
+    `dsh:monitor:delivered:${item.delivery_id}`,
+  )))
   const failed = results.filter(result => result.status === 'rejected').length
   const probeNotice = (p: ProbeItem, type: 'interest.probe' | 'avoidance.probe'): ProbeNotice | null => {
     const key = probeKey(type, p.domain)
@@ -322,6 +381,7 @@ export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<str
     notifications: notification !== null
       ? [{ article_id: notification.article_id, title: notification.title, reason: notification.reason, media: notification.media, original_url: notification.original_url }]
       : [],
+    monitorNotifications,
     error: failed === 0 ? '' : failed === results.length
       ? '消息暂时读取失败，请确认新闻爪后端已启动。'
       : '部分消息来源读取失败，当前只展示已成功取得的消息。',
@@ -330,6 +390,7 @@ export async function hydrateDrawer(base: string, handledProbes: ReadonlySet<str
       avoidances: results[1].status === 'fulfilled',
       spotlights: results[2].status === 'fulfilled',
       notification: results[3].status === 'fulfilled',
+      monitorNotifications: results[4].status === 'fulfilled',
     },
   }
 }

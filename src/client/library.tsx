@@ -1,20 +1,22 @@
 /** NewsClaw local library: later, favorites and recent reading history. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  checkWebMonitor, createWebMonitor, fetchWebMonitorHistory, fetchWebMonitors,
   fetchContentHistory, fetchSaved, fetchSavedStatus, removeSaved, saveItem,
-  sendBehaviorEvents, stableId,
-  type ContentHistoryItem, type SavedItem,
+  sendBehaviorEvents, setWebMonitorState, stableId,
+  type ContentHistoryItem, type SavedItem, type WebMonitorHistory, type WebMonitorItem,
 } from './api.ts'
 import { ActionButton, EmptyState, ErrorNote, MetaRow, openItem, Thumb } from './views.tsx'
 import css from './panel.module.css'
 
-type LibraryTab = 'watch_later' | 'favorite' | 'history'
+type LibraryTab = 'watch_later' | 'favorite' | 'history' | 'monitoring'
 type HistoryCategory = 'clicked' | 'shown' | 'removed'
 
 const LIBRARY_TABS: Array<{ key: LibraryTab; label: string }> = [
   { key: 'watch_later', label: '稍后读' },
   { key: 'favorite', label: '收藏' },
   { key: 'history', label: '阅读记录' },
+  { key: 'monitoring', label: '网页监控' },
 ]
 
 const HISTORY_CATEGORIES: Array<{ key: HistoryCategory; label: string }> = [
@@ -297,6 +299,295 @@ function HistoryList({ base }: { base: string }): React.JSX.Element {
   )
 }
 
+function monitorStatus(status: string): string {
+  if (status === 'active') return '监控中'
+  if (status === 'paused') return '已暂停'
+  if (status === 'retry_wait') return '等待重试'
+  if (status === 'needs_attention') return '需要处理'
+  return status || '状态未知'
+}
+
+function shortTime(value: string): string {
+  if (value === '') return '尚未检查'
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function MonitorHistoryFold({ history }: { history: WebMonitorHistory }): React.JSX.Element {
+  const meaningful = history.diffs.filter(item => item.classification === 'meaningful').slice(0, 3)
+  const totalVersions = Math.max(history.monitor.current_version, history.versions.length)
+  return (
+    <div className={css.monitorHistory}>
+      <div className={css.monitorHistoryHead}>已留存 {totalVersions} 个版本</div>
+      {meaningful.length === 0
+        ? <div className={css.monitorQuiet}>还没有确认的正文变化。</div>
+        : meaningful.map(item => (
+          <div className={css.monitorDiff} key={item.diff_id}>
+            <span>{item.summary || '正文发生变化'}</span>
+            <time>{shortTime(item.created_at)}</time>
+          </div>
+        ))}
+    </div>
+  )
+}
+
+function WebMonitoringView({ base }: { base: string }): React.JSX.Element {
+  const [items, setItems] = useState<WebMonitorItem[] | null>(null)
+  const [url, setUrl] = useState('')
+  const [label, setLabel] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
+  const [error, setError] = useState('')
+  const [status, setStatus] = useState('')
+  const [expanded, setExpanded] = useState('')
+  const [history, setHistory] = useState<Record<string, WebMonitorHistory>>({})
+  const [historyErrors, setHistoryErrors] = useState<Record<string, string>>({})
+  const actionIds = useRef(new Map<string, string>())
+  const reloadGeneration = useRef(0)
+  const busyIdsRef = useRef<Set<string>>(new Set())
+  const expandedRef = useRef('')
+  const historySignatures = useRef(new Map<string, string>())
+  const historyLoadGenerations = useRef(new Map<string, number>())
+  expandedRef.current = expanded
+
+  const setMonitorBusy = useCallback((monitorId: string, value: boolean) => {
+    const next = new Set(busyIdsRef.current)
+    if (value) next.add(monitorId)
+    else next.delete(monitorId)
+    busyIdsRef.current = next
+    setBusyIds(next)
+  }, [])
+
+  const reload = useCallback(async () => {
+    const generation = ++reloadGeneration.current
+    setError('')
+    try {
+      const next = await fetchWebMonitors(base)
+      if (generation === reloadGeneration.current) setItems(next)
+    } catch (cause) {
+      if (generation === reloadGeneration.current) setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [base])
+
+  useEffect(() => {
+    void reload()
+    const interval = window.setInterval(() => { void reload() }, 30_000)
+    return () => {
+      window.clearInterval(interval)
+      reloadGeneration.current += 1
+    }
+  }, [reload])
+
+  const add = useCallback(async () => {
+    const target = url.trim()
+    if (target === '' || adding) return
+    setAdding(true)
+    setError('')
+    setStatus('正在读取正文并建立首个基线…')
+    try {
+      const created = await createWebMonitor(base, { url: target, label: label.trim(), requestId: stableId() })
+      setUrl('')
+      setLabel('')
+      if (created.initialCheckStatus === 'baseline' || created.item.has_baseline) {
+        setStatus('已建立基线；以后只有正文发生真实变化才会提醒。')
+      } else {
+        setStatus('监控已保存，但首次读取没有建立基线；可在列表中查看原因并重新检查。')
+      }
+      await reload()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setStatus('')
+    } finally { setAdding(false) }
+  }, [adding, base, label, reload, url])
+
+  const act = useCallback(async (item: WebMonitorItem, action: 'check' | 'pause' | 'resume' | 'remove') => {
+    if (busyIdsRef.current.has(item.monitor_id)) return
+    if (action === 'remove' && !window.confirm(`移除“${item.label || item.display_url}”的监控？历史版本不会删除。`)) return
+    const key = `${item.monitor_id}:${action}`
+    let requestId = actionIds.current.get(key)
+    if (requestId === undefined) {
+      requestId = stableId()
+      actionIds.current.set(key, requestId)
+    }
+    setMonitorBusy(item.monitor_id, true)
+    setError('')
+    setStatus(action === 'check' ? '正在检查正文变化…' : '')
+    try {
+      const checkResult = action === 'check'
+        ? await checkWebMonitor(base, item.monitor_id, requestId)
+        : null
+      if (action !== 'check') await setWebMonitorState(base, item.monitor_id, action)
+      actionIds.current.delete(key)
+      const historyWasOpen = expandedRef.current === item.monitor_id
+      if (action === 'check' && historyWasOpen) {
+        setHistory(previous => {
+          const next = { ...previous }
+          delete next[item.monitor_id]
+          return next
+        })
+        setHistoryErrors(previous => {
+          const next = { ...previous }
+          delete next[item.monitor_id]
+          return next
+        })
+      }
+      await reload()
+      if (action === 'check' && historyWasOpen) {
+        try {
+          const refreshed = await fetchWebMonitorHistory(base, item.monitor_id)
+          historySignatures.current.set(
+            item.monitor_id,
+            `${refreshed.monitor.current_version}:${refreshed.monitor.change_count}`,
+          )
+          setHistory(previous => ({ ...previous, [item.monitor_id]: refreshed }))
+          setHistoryErrors(previous => {
+            const next = { ...previous }
+            delete next[item.monitor_id]
+            return next
+          })
+        } catch (historyError) {
+          const message = historyError instanceof Error ? historyError.message : String(historyError)
+          setHistoryErrors(previous => ({ ...previous, [item.monitor_id]: message }))
+          setError('检查已完成，但版本列表刷新失败：' + message)
+        }
+      }
+      if (action === 'check') {
+        const checkStatus = checkResult?.status ?? ''
+        if (checkStatus === 'changed') setStatus('发现正文变化，已写入事件档案和消息。')
+        else if (checkStatus === 'baseline') setStatus('已建立正文基线。')
+        else if (checkStatus === 'unchanged' || checkStatus === 'noise_only') setStatus('检查完成，正文没有确认变化。')
+        else if (checkStatus === 'retry_wait') {
+          setStatus('本次读取失败，系统会自动重试。')
+          setError(checkResult?.error || '本次读取失败，系统会自动重试。')
+        } else if (checkStatus === 'failed') {
+          setStatus('本次检查失败，需要处理。')
+          setError(checkResult?.error || '本次检查失败，需要处理。')
+        } else if (checkStatus === 'cancelled') setStatus('本次检查已取消。')
+        else {
+          setStatus('')
+          setError('检查结果状态未知，请刷新后查看。')
+        }
+      } else setStatus('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setStatus('')
+    } finally { setMonitorBusy(item.monitor_id, false) }
+  }, [base, history, reload, setMonitorBusy])
+
+  const toggleHistory = useCallback(async (item: WebMonitorItem, force = false) => {
+    const monitorId = item.monitor_id
+    if (busyIdsRef.current.has(monitorId)) return
+    if (expandedRef.current === monitorId && !force) {
+      const generation = (historyLoadGenerations.current.get(monitorId) ?? 0) + 1
+      historyLoadGenerations.current.set(monitorId, generation)
+      expandedRef.current = ''
+      setExpanded('')
+      return
+    }
+    expandedRef.current = monitorId
+    setExpanded(monitorId)
+    const generation = (historyLoadGenerations.current.get(monitorId) ?? 0) + 1
+    historyLoadGenerations.current.set(monitorId, generation)
+    historySignatures.current.delete(monitorId)
+    setHistory(previous => {
+      const next = { ...previous }
+      delete next[monitorId]
+      return next
+    })
+    setHistoryErrors(previous => {
+      const next = { ...previous }
+      delete next[monitorId]
+      return next
+    })
+    setMonitorBusy(monitorId, true)
+    try {
+      const value = await fetchWebMonitorHistory(base, monitorId)
+      if (historyLoadGenerations.current.get(monitorId) !== generation) return
+      historySignatures.current.set(
+        monitorId,
+        `${value.monitor.current_version}:${value.monitor.change_count}`,
+      )
+      setHistory(previous => ({ ...previous, [monitorId]: value }))
+    } catch (cause) {
+      if (historyLoadGenerations.current.get(monitorId) !== generation) return
+      setHistoryErrors(previous => ({
+        ...previous,
+        [monitorId]: cause instanceof Error ? cause.message : String(cause),
+      }))
+    } finally {
+      setMonitorBusy(monitorId, false)
+    }
+  }, [base, setMonitorBusy])
+
+  useEffect(() => {
+    if (expanded === '' || items === null || busyIds.has(expanded)) return
+    const item = items.find(row => row.monitor_id === expanded)
+    const cached = history[expanded]
+    if (item === undefined || cached === undefined) return
+    if (
+      item.current_version > cached.monitor.current_version
+      || item.change_count > cached.monitor.change_count
+    ) {
+      void toggleHistory(item, true)
+    }
+  }, [busyIds, expanded, history, items, toggleHistory])
+
+  const totalChanges = items?.reduce((sum, item) => sum + item.change_count, 0) ?? 0
+  const attention = items?.filter(item => item.status === 'needs_attention' || item.status === 'retry_wait').length ?? 0
+  return (
+    <div className={css.monitoring}>
+      <div className={css.monitorIntro}>
+        <strong>盯住变化，不重复读整篇</strong>
+        <span>添加公开网页或 PDF；首轮只建基线，之后正文真变了才进入事件档案。</span>
+      </div>
+      <div className={css.monitorForm}>
+        <input aria-label="网页或 PDF 地址" placeholder="粘贴公开网页或 PDF 地址" value={url} onChange={event => setUrl(event.currentTarget.value)} />
+        <input aria-label="监控名称" placeholder="名称（可不填）" value={label} onChange={event => setLabel(event.currentTarget.value)} />
+        <button type="button" disabled={adding || url.trim() === ''} onClick={() => void add()}>{adding ? '建立中…' : '开始监控'}</button>
+      </div>
+      <div className={css.monitorStats}>
+        {items === null
+          ? <span>记录尚未载入</span>
+          : <><span>{items.length} 个监控</span><span>{totalChanges} 次确认变化</span><span>{attention} 个待处理</span></>}
+        <button type="button" disabled={adding} onClick={() => void reload()}>刷新</button>
+      </div>
+      {status !== '' ? <div className={css.monitorQuiet}>{status}</div> : null}
+      {error !== '' ? <ErrorNote text={error} /> : null}
+      {items !== null && items.length === 0 ? <EmptyState text="还没有网页监控。先添加一个经常更新的政策页、公告页或 PDF。" /> : null}
+      {items?.map(item => {
+        const itemBusy = busyIds.has(item.monitor_id)
+        const folded = history[item.monitor_id]
+        const historyError = historyErrors[item.monitor_id] ?? ''
+        return (
+          <div className={css.monitorCard} key={item.monitor_id} data-status={item.status}>
+            <div className={css.monitorTop}>
+              <span className={css.monitorState}>{monitorStatus(item.status)}</span>
+              <span className={css.monitorMetrics}>V{item.current_version || '—'} · {item.change_count} 次变化</span>
+            </div>
+            <div className={css.monitorTitle}>{item.label || item.display_url}</div>
+            <div className={css.monitorUrl}>{item.display_url}</div>
+            <div className={css.monitorMeta}>上次成功：{shortTime(item.last_success_at)} · 下次：{shortTime(item.next_check_at)}</div>
+            {item.last_error !== '' ? <div className={css.monitorError}>{item.last_error}</div> : null}
+            <div className={css.monitorActions}>
+              <button type="button" disabled={itemBusy || item.status === 'paused'} onClick={() => void act(item, 'check')}>立即检查</button>
+              <button type="button" disabled={itemBusy} onClick={() => void act(item, item.status === 'paused' ? 'resume' : 'pause')}>{item.status === 'paused' ? '继续' : '暂停'}</button>
+              <button type="button" disabled={itemBusy} onClick={() => void toggleHistory(item)}>{expanded === item.monitor_id ? '收起版本' : '版本记录'}</button>
+              <button type="button" disabled={itemBusy} onClick={() => void act(item, 'remove')}>移除</button>
+            </div>
+            {expanded === item.monitor_id
+              ? folded !== undefined
+                ? <MonitorHistoryFold history={folded} />
+                : historyError !== ''
+                  ? <div className={css.monitorHistoryError}><span>{historyError}</span><button type="button" onClick={() => void toggleHistory(item, true)}>重新读取</button></div>
+                  : <div className={css.monitorQuiet}>正在读取版本…</div>
+              : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function LibraryView({ base }: { base: string }): React.JSX.Element {
   const [tab, setTab] = useState<LibraryTab>('watch_later')
   return (
@@ -309,6 +600,7 @@ export function LibraryView({ base }: { base: string }): React.JSX.Element {
       {tab === 'watch_later' ? <SavedList key={`later-${base}`} base={base} listKind="watch_later" /> : null}
       {tab === 'favorite' ? <SavedList key={`favorite-${base}`} base={base} listKind="favorite" /> : null}
       {tab === 'history' ? <HistoryList key={`history-${base}`} base={base} /> : null}
+      {tab === 'monitoring' ? <WebMonitoringView key={`monitoring-${base}`} base={base} /> : null}
     </>
   )
 }

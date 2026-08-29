@@ -1,7 +1,6 @@
 ---
 name: newsclaw-adapter
-description: Use the 22 NewsClaw Agent Bridge tools to read personalized news, profile state, source health, dialogue, probes and saved lists, and to feed explicit user signals back into the local learning loop.
-user-invocable: true
+description: Use the 29 local NewsClaw Agent Bridge tools for personalized news, profile state, dialogue, saved lists, and deterministic public webpage/PDF change monitoring. Do not use them for trading, broad web crawling, or unrequested external actions.
 ---
 
 # 新闻爪 Agent Bridge
@@ -19,7 +18,7 @@ system.
 4. Use `newsclaw_recommend`, `newsclaw_reshuffle`, or
    `newsclaw_append_recommendations` to read the shared recommendation pool.
 
-## The 22 tools
+## The 29 tools
 
 - Contract and pool: `newsclaw_get_capabilities`, `newsclaw_recommend`,
   `newsclaw_reshuffle`, `newsclaw_append_recommendations`
@@ -37,6 +36,11 @@ system.
   `newsclaw_get_profile_edit_state`, `newsclaw_edit_profile`
 - Local library: `newsclaw_save_local`, `newsclaw_remove_saved`,
   `newsclaw_list_saved`
+- Public document monitoring: `newsclaw_list_web_monitors`,
+  `newsclaw_add_web_monitor`, `newsclaw_check_web_monitor`,
+  `newsclaw_set_web_monitor_state`, `newsclaw_get_web_monitor_history`,
+  `newsclaw_list_monitor_notifications`,
+  `newsclaw_act_on_monitor_notification`
 
 ## Working rules
 
@@ -57,6 +61,15 @@ system.
    external services.
 9. A single broken media source means degraded service, not a successful full
    refresh. Report the source name and current health state.
+10. Add a webpage/PDF monitor only when the user identifies a public URL to
+    watch. Never infer permission to monitor other pages, a whole domain, a
+    private address, or an authenticated page.
+11. A first monitor fetch is a baseline, not a change. Treat only a backend
+    `meaningful` result as changed; `noise_only`, `unchanged`, and failures are
+    different states. Never turn the user's label/focus note into a fact.
+12. Monitor add/check and notification actions require stable `requestId`
+    values. Reuse one only for an exact retry. Pause/remove preserve history;
+    do not claim evidence was deleted.
 
 ## Suggested daily loop
 
@@ -66,3 +79,4 @@ system.
 4. Explicit feedback, spotlight response or local save only after the user's
    action or request
 5. Activity feed to explain what the system learned
+6. Monitor inbox/history only when the user asks about watched document changes

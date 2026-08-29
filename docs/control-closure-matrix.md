@@ -1,7 +1,7 @@
 # DSH 控件与 Agent 工具闭环矩阵
 
 > 审计基线：`31cc0c257453eb59d4d9ab9a705e6cadd517a5be`  
-> 目标：每个可见操作和 22 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
+> 目标：每个可见操作和 29 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
 
 ## 公共合同
 
@@ -9,7 +9,7 @@
 |---|---|
 | 后端地址 | Node 工具、浏览器面板和 WebSocket 共用 Harness 同一行 `apiUrl`。只允许 `http(s)://127.0.0.1`/`localhost`/`[::1]`；带凭据、query、hash 或非本机主机的值会 fail-closed 回到 `http://127.0.0.1:8430`。 |
 | REST 失败 | 非 2xx 保留路径、HTTP 状态和后端细节；断网/超时显示在当前卡片或页面。已成功读取的分区不被另一分区的失败清空。 |
-| REST 超时 | 健康 5s；状态/收藏 8–10s；历史/消息 15s；推荐/写操作 10–20s；旧同步 AI 对话 300s。超时文案包含接口与毫秒数。 |
+| REST 超时 | 健康 5s；状态/收藏 8–10s；历史/消息 10–15s；推荐/普通写操作 10–20s；网页/PDF 抓取与建基线 120s；旧同步 AI 对话 300s。超时文案包含接口与毫秒数。 |
 | 写入重试 | 不在客户端盲目自动重放。反馈/探针/惊喜/消息确认复用稳定 `request_id`；持久对话复用稳定 `turn_id`；同一请求与不同对象冲突由后端返回 409。 |
 | 阅读信号 | 打开原文立即新开窗口，然后持久化一次弱 `open`信号。模糊超时后再点复用原 `request_id`；失败明确显示“原文已打开，但阅读记录未确认保存”。 |
 | WebSocket | `/api/runtime-stream`；实时推送探针/惊喜，500ms 去重，2s→4s→…→30s 指数退避；稳定连接 8s 后将下次退避恢复到 2s。 |
@@ -59,9 +59,13 @@
 | 假设卡确认/否定/修订/放一放 | `POST /api/chat/cards/{turn_id}/action` | 持久卡状态与画像 overlay | 后端 verdict 替换卡状态 | 20s；失败保留原卡可重试 |
 | 清除对话上下文 | localStorage context | 本地对话绑定 | 引用条立即消失 | 纯本地操作 |
 | 发送对话 | `POST /api/chat/turns` + `GET /api/chat/turns/{turn_id}` polling | 持久 turn；稳定 `turn_id` | optimistic turn → pending → settled，再刷新历史 | start 20s/poll 15s；失败恢复草稿，同文本+上下文重试复用 turn ID；409 给出清除上下文指引 |
-| 铃铛/消息关闭 | drawer hydrate / local toggle | 各分区仅成功后替换；已处理 key 本地去重 | badge 和列表同步 | 四路 `allSettled`；部分失败只展示成功来源，全失败显示后端不可达 |
+| 网页监控添加 | `POST /api/news/monitors` | 监控目标、对应事件档案和首个正文基线；确定性 request ID | 明确提示“已建基线”；首轮不制造变化消息 | 120s；私网/本机/带凭据 URL 拒绝；抓取失败不伪装成功，可按原 URL 重试 |
+| 网页监控立即检查/暂停/继续/移除 | check/pause/resume/delete routes | 持久状态、检查账本和软删除；历史证据不删除 | 后端确认后刷新卡片 | 操作失败保留原卡；检查复用稳定 request ID；暂停状态不允许误检查 |
+| 网页监控版本记录 | `GET /api/news/monitors/{id}/history` | 只读不可变版本、正文差异和检查历史 | 默认折叠，只显示近三条确认变化摘要 | 12s；失败不清空已有卡片；原文全文不铺满面板 |
+| 铃铛/消息关闭 | drawer hydrate / local toggle | 各分区仅成功后替换；已处理 key 本地去重；监控消息为数据库持久行 | badge 和列表同步 | 五路 `allSettled`；部分失败只展示成功来源，全失败显示后端不可达 |
 | 消息中探针/惊喜按钮 | probe/spotlight respond | 后端状态与画像 | 确认成功后才从 drawer 移除 | 20s；失败保留卡和 request ID |
 | “值得一看”打开 | `openItem` + `POST /api/notifications/ack` | 阅读信号；消息 ack 幂等终态 | ack 成功后才移除消息 | ack 失败显示“已打开但确认未保存”，卡保留且复用 request ID；同 ID 不同文章由 409 拒绝 |
+| 网页监控消息“查看/忽略” | monitor-notification action API | delivered/read/dismiss 持久；每个按钮稳定 request ID | 成功后移出 drawer；查看打开同一 8430 的监控页 | 10s；失败保留消息；同 ID 改做另一动作由 409 拒绝 |
 
 ### 设置
 
@@ -72,7 +76,7 @@
 | 开机自启动 | `POST /api/autostart/apply` → 必须 `GET /api/autostart-status` 复核 | OS 自启动项 | 只有 apply=true 且复核值一致才显示成功 | 15s+10s；失败再读真实值；无法复核时标记未知并禁用，不误显示关闭 |
 | 打开新闻爪电脑版 | `window.open(<apiUrl>/web)` | 无额外配置副本 | 进入主配置中心 | DSH 仍保留只读已生效值；不写旧 `/api/config` |
 
-## 22 个 Agent Bridge 工具
+## 29 个 Agent Bridge 工具
 
 所有工具都由 `registerBridgeTools` 注册，再由 `Bridge.run(command, argv)` 调用 `POST <apiUrl>/api/agent-bridge`。工具超时是 Harness 插件行的 `timeoutMs`（1秒–15 分钟夹取，默认 5 分钟）。客户端不自动重放；读操作可重试，写操作必须复用原稳定 ID。
 
@@ -100,10 +104,17 @@
 | 20 | `newsclaw_save_local` | `save-local`；favorite/watch_later 本地成员关系 | 本地数据库写入，不同步媒体账号 | 列表枚举本地校验；超时后先 list_saved 确认再决定重试 |
 | 21 | `newsclaw_remove_saved` | `remove-saved`；移除本地成员关系 | 本地数据库更新 | 列表枚举本地校验；超时后先 list_saved 确认 |
 | 22 | `newsclaw_list_saved` | `list-saved`；只读 favorite/watch_later | 返回 1–200 条 | 可直接重试 |
+| 23 | `newsclaw_list_web_monitors` | `web-monitor-list`；只读持久监控与运行态 | 返回基线版本、确认变化数、下次检查 | 可直接重试；不回显 ETag/worker lease |
+| 24 | `newsclaw_add_web_monitor` | `web-monitor-add`；安全校验 URL、建事件档案与首个基线 | 首轮只建基线，不产生假变化 | 必填 requestId；私网/本机/凭据 URL 拒绝；同请求重试复用 ID |
+| 25 | `newsclaw_check_web_monitor` | `web-monitor-check`；立即抓取、规范化和正文差异判断 | 真变化原子写入版本、事件和站内消息 | 必填 requestId；并发检查会合流；暂停/删除明确拒绝 |
+| 26 | `newsclaw_set_web_monitor_state` | `web-monitor-set-state`；pause/resume/remove | 状态持久，remove 为软删除 | 枚举本地校验；历史版本和事件不删除 |
+| 27 | `newsclaw_get_web_monitor_history` | `web-monitor-history`；只读检查/版本/差异 | 返回最多 200 行每分区 | 可直接重试；不回显 worker lease |
+| 28 | `newsclaw_list_monitor_notifications` | `web-monitor-notifications`；只读未读/历史消息 | 返回持久 delivery ID 和事件关联 | 可直接重试；默认只读未处理消息 |
+| 29 | `newsclaw_act_on_monitor_notification` | `web-monitor-notification-action`；delivered/read/dismiss | 消息终态持久 | 必填 requestId；同 ID 改动作由后端冲突拒绝 |
 
 ## 加载、卸载与隔离
 
-- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 22 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
+- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 29 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
 - 浏览器端面板、入口按钮和布局任一步失败，会回收已建立的一切；异常仅记录在控制台，Harness 主界面继续使用。
 - 卸载会关闭 WebSocket，移除 DOM 列/拖动柄/入口，取消订阅并注销 Skill/工具。
 - CSS 热加载采用同 ID upsert，替换内容而不叠加旧样式。
@@ -112,5 +123,5 @@
 
 - DSH 是共享后端的消费端；AI 路由、密钥、新闻源开关/RSS、刷新和重试参数统一到电脑版编辑，DSH 只读真实已生效值。
 - DSH 不执行首次设置或画像重建；它只显示首次设置/失败重试状态，已有画像去电脑版手工校正。
-- 不抓网页、不读 Cookie、不连券商、不下单；只根据已取得的正文等级工作。
+- 只由 8430 后端抓取用户主动添加的公开网页/PDF；不读浏览器 Cookie、不提交表单、不带认证、不访问私网，不连券商、不下单。DSH 本身只消费同一本地数据库真相。
 - 源包保留必要的 MIT/BSD 法律归属文件；产品 UI、Agent 工具名、日常逻辑和业务文案不使用视频平台语义。

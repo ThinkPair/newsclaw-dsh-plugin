@@ -4608,3 +4608,237 @@
 :global(.newsclaw-panel-handle):hover::after {
   background: rgba(251, 114, 153, 0.55);
 }
+
+/* ── P5 objective webpage/PDF monitoring ───────────────────────────── */
+
+.monitoring {
+  display: grid;
+  gap: 10px;
+}
+
+.monitorIntro {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--newsclaw-line);
+  border-radius: 12px;
+  background: var(--newsclaw-surface);
+}
+
+.monitorIntro strong {
+  font-size: 13px;
+}
+
+.monitorIntro span,
+.monitorQuiet,
+.monitorMeta,
+.monitorUrl {
+  color: var(--newsclaw-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.monitorForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 6px;
+}
+
+.monitorForm input,
+.monitorForm button,
+.monitorActions button {
+  min-width: 0;
+  border: 1px solid var(--newsclaw-line);
+  border-radius: 9px;
+  background: var(--newsclaw-surface);
+  color: var(--newsclaw-text);
+  font: inherit;
+}
+
+.monitorForm input {
+  height: 34px;
+  padding: 0 9px;
+  outline: none;
+}
+
+.monitorForm input:first-child {
+  grid-column: 1 / -1;
+}
+
+.monitorForm input:focus {
+  border-color: rgba(251, 114, 153, 0.7);
+  box-shadow: 0 0 0 2px rgba(251, 114, 153, 0.1);
+}
+
+.monitorForm button {
+  border-color: #f65788;
+  background: #f65788;
+  color: #fff;
+  cursor: pointer;
+}
+
+.monitorForm button:disabled,
+.monitorActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.monitorStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.monitorStats button {
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--newsclaw-line);
+  border-radius: 999px;
+  background: var(--newsclaw-surface);
+  color: var(--newsclaw-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.monitorStats button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.monitorStats span,
+.monitorState,
+.monitorMetrics {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(32, 48, 74, 0.06);
+  color: var(--newsclaw-text-muted);
+  font-size: 10px;
+}
+
+.monitorCard {
+  display: grid;
+  gap: 6px;
+  padding: 11px;
+  border: 1px solid var(--newsclaw-line);
+  border-left: 3px solid #57a66a;
+  border-radius: 12px;
+  background: var(--newsclaw-surface);
+}
+
+.monitorCard[data-status='paused'] {
+  border-left-color: #9ba4b3;
+}
+
+.monitorCard[data-status='retry_wait'],
+.monitorCard[data-status='needs_attention'] {
+  border-left-color: #d17b35;
+}
+
+.monitorTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.monitorTitle {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitorUrl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitorError {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(209, 123, 53, 0.1);
+  color: #a65a22;
+  font-size: 11px;
+}
+
+.monitorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.monitorActions button {
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.monitorActions button:hover:not(:disabled) {
+  border-color: rgba(246, 87, 136, 0.55);
+  color: #f65788;
+}
+
+.monitorHistory {
+  display: grid;
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px solid var(--newsclaw-line);
+}
+
+.monitorHistoryHead {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.monitorDiff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  color: var(--newsclaw-text);
+  font-size: 11px;
+}
+
+.monitorDiff time {
+  color: var(--newsclaw-text-muted);
+}
+
+.monitorHistoryError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--newsclaw-line);
+  color: var(--newsclaw-danger);
+  font-size: 11px;
+}
+
+.monitorHistoryError button {
+  flex: 0 0 auto;
+  border: 1px solid var(--newsclaw-line);
+  border-radius: 999px;
+  background: var(--newsclaw-surface);
+  color: var(--newsclaw-text);
+  padding: 4px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel[data-dark='true'] .monitorIntro,
+.panel[data-dark='true'] .monitorCard,
+.panel[data-dark='true'] .monitorForm input,
+.panel[data-dark='true'] .monitorActions button,
+.panel[data-dark='true'] .monitorStats button,
+.panel[data-dark='true'] .monitorHistoryError button {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(30, 32, 38, 0.92);
+}
+
+.panel[data-dark='true'] .monitorStats span,
+.panel[data-dark='true'] .monitorState,
+.panel[data-dark='true'] .monitorMetrics {
+  background: rgba(255, 255, 255, 0.07);
+}

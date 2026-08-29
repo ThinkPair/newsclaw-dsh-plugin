@@ -298,6 +298,76 @@ export interface NewsBootstrapStatus {
   detail: string
 }
 
+/** One durable public webpage/PDF monitor. Worker leases and validators never reach the UI. */
+export interface WebMonitorItem {
+  monitor_id: string
+  event_id: string
+  label: string
+  display_url: string
+  content_kind: string
+  status: string
+  current_version: number
+  change_count: number
+  unread_count: number
+  has_baseline: boolean
+  last_success_at: string
+  next_check_at: string
+  last_error: string
+}
+
+export interface WebMonitorCreateResult {
+  item: WebMonitorItem
+  initialCheckStatus: string
+}
+
+export interface WebMonitorCheckResult {
+  status: string
+  error: string
+  retryable: boolean
+}
+
+export interface WebMonitorVersion {
+  snapshot_id: string
+  ordinal: number
+  title: string
+  content_kind: string
+  classification: string
+  suppression_reason: string
+  byte_count: number
+  fetched_at: string
+}
+
+export interface WebMonitorDiff {
+  diff_id: string
+  change_id: string
+  classification: string
+  summary: string
+  added: string[]
+  removed: string[]
+  created_at: string
+}
+
+export interface WebMonitorHistory {
+  monitor: WebMonitorItem
+  versions: WebMonitorVersion[]
+  diffs: WebMonitorDiff[]
+}
+
+export interface WebMonitorNotification {
+  delivery_id: string
+  monitor_id: string
+  event_id: string
+  change_id: string
+  kind: string
+  title: string
+  body: string
+  label: string
+  display_url: string
+  created_at: string
+  read_at: string
+  dismissed_at: string
+}
+
 /**
  * Build a concise human-readable summary from a backend error `detail` so the
  * failure toast shows WHICH field failed validation, not just `failed: 422`.
@@ -1253,4 +1323,147 @@ export async function fetchNewsBootstrapStatus(base: string, signal?: AbortSigna
     profile_ready: row.profile_ready === true,
     detail: firstText(row.detail, row.error),
   }
+}
+
+function decodeWebMonitor(value: unknown): WebMonitorItem {
+  const row = typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  return {
+    monitor_id: str(row.monitor_id),
+    event_id: str(row.event_id),
+    label: str(row.label),
+    display_url: firstText(row.display_url, row.canonical_url),
+    content_kind: firstText(row.content_kind, 'auto'),
+    status: firstText(row.status, 'unknown'),
+    current_version: num(row.current_version),
+    change_count: num(row.change_count),
+    unread_count: num(row.unread_count),
+    has_baseline: row.has_baseline === true,
+    last_success_at: str(row.last_success_at),
+    next_check_at: str(row.next_check_at),
+    last_error: str(row.last_error),
+  }
+}
+
+/** Read the same durable monitor ledger used by the desktop Web UI and Agent tools. */
+export async function fetchWebMonitors(base: string, signal?: AbortSignal): Promise<WebMonitorItem[]> {
+  const data = await requestJson(base, '/api/news/monitors', { timeoutMs: 12_000, signal })
+  return asItems(data).map(decodeWebMonitor).filter(item => item.monitor_id !== '')
+}
+
+/** Add a monitor and wait for its first baseline to be established. */
+export async function createWebMonitor(
+  base: string,
+  input: { url: string; label?: string; focus?: string; intervalMinutes?: number; requestId?: string },
+  signal?: AbortSignal,
+): Promise<WebMonitorCreateResult> {
+  const data = await requestJson(base, '/api/news/monitors', {
+    method: 'POST',
+    timeoutMs: 120_000,
+    signal,
+    body: {
+      url: input.url,
+      kind: 'auto',
+      label: input.label ?? '',
+      focus: input.focus ?? '',
+      interval_minutes: input.intervalMinutes ?? 1440,
+      request_id: input.requestId ?? stableId(),
+    },
+  })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  const item = decodeWebMonitor(row.item)
+  if (item.monitor_id === '') throw new Error('网页监控创建成功，但返回记录无效。')
+  const check = typeof row.check === 'object' && row.check !== null && !Array.isArray(row.check)
+    ? row.check as Record<string, unknown>
+    : {}
+  return { item, initialCheckStatus: str(check.status) }
+}
+
+export async function checkWebMonitor(base: string, monitorId: string, requestId = stableId(), signal?: AbortSignal): Promise<WebMonitorCheckResult> {
+  const data = await requestJson(base, `/api/news/monitors/${encodeURIComponent(monitorId)}/check`, {
+    method: 'POST',
+    timeoutMs: 120_000,
+    signal,
+    body: { request_id: requestId },
+  })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  const check = typeof row.check === 'object' && row.check !== null && !Array.isArray(row.check)
+    ? row.check as Record<string, unknown>
+    : {}
+  return {
+    status: firstText(row.status, check.status),
+    error: firstText(row.error, check.error_message),
+    retryable: row.retryable === true || check.retryable === true,
+  }
+}
+
+export async function setWebMonitorState(
+  base: string,
+  monitorId: string,
+  action: 'pause' | 'resume' | 'remove',
+  signal?: AbortSignal,
+): Promise<void> {
+  const id = encodeURIComponent(monitorId)
+  if (action === 'remove') {
+    await requestJson(base, `/api/news/monitors/${id}`, { method: 'DELETE', timeoutMs: 12_000, signal })
+    return
+  }
+  await requestJson(base, `/api/news/monitors/${id}/${action}`, { method: 'POST', timeoutMs: 12_000, signal })
+}
+
+export async function fetchWebMonitorHistory(base: string, monitorId: string, signal?: AbortSignal): Promise<WebMonitorHistory> {
+  const data = await requestJson(base, `/api/news/monitors/${encodeURIComponent(monitorId)}/history?limit=30`, { timeoutMs: 12_000, signal })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  const versions = Array.isArray(row.versions) ? row.versions : []
+  const diffs = Array.isArray(row.diffs) ? row.diffs : []
+  return {
+    monitor: decodeWebMonitor(row.monitor),
+    versions: versions.map(value => {
+      const item = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+      return {
+        snapshot_id: str(item.snapshot_id), ordinal: num(item.ordinal), title: str(item.title),
+        content_kind: str(item.content_kind), classification: str(item.classification),
+        suppression_reason: str(item.suppression_reason), byte_count: num(item.byte_count),
+        fetched_at: str(item.fetched_at),
+      }
+    }),
+    diffs: diffs.map(value => {
+      const item = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+      return {
+        diff_id: str(item.diff_id), change_id: str(item.change_id),
+        classification: str(item.classification), summary: str(item.summary),
+        added: Array.isArray(item.added) ? item.added.map(str).filter(Boolean) : [],
+        removed: Array.isArray(item.removed) ? item.removed.map(str).filter(Boolean) : [],
+        created_at: str(item.created_at),
+      }
+    }),
+  }
+}
+
+export async function fetchWebMonitorNotifications(base: string, signal?: AbortSignal): Promise<{ items: WebMonitorNotification[]; unreadCount: number }> {
+  const data = await requestJson(base, '/api/news/monitor-notifications?limit=100', { timeoutMs: 10_000, signal })
+  const row = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+  return {
+    unreadCount: num(row.unread_count),
+    items: asItems(data).map(item => ({
+      delivery_id: str(item.delivery_id), monitor_id: str(item.monitor_id),
+      event_id: str(item.event_id), change_id: str(item.change_id), kind: str(item.kind),
+      title: str(item.title), body: str(item.body), label: str(item.label),
+      display_url: str(item.display_url), created_at: str(item.created_at),
+      read_at: str(item.read_at), dismissed_at: str(item.dismissed_at),
+    })).filter(item => item.delivery_id !== ''),
+  }
+}
+
+export async function actOnWebMonitorNotification(
+  base: string,
+  deliveryId: string,
+  action: 'delivered' | 'read' | 'dismiss',
+  requestId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await requestJson(base, `/api/news/monitor-notifications/${encodeURIComponent(deliveryId)}`, {
+    method: 'POST', timeoutMs: 10_000, signal, body: { action, request_id: requestId },
+  })
 }

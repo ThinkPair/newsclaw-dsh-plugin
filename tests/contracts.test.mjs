@@ -6,7 +6,7 @@ import test from 'node:test'
 const root = process.cwd()
 const read = (path) => readFileSync(join(root, path), 'utf8')
 
-test('registers the exact 22 NewsClaw bridge tool names', () => {
+test('registers the exact 29 NewsClaw bridge tool names', () => {
   const source = read('src/tools.ts')
   const names = [...source.matchAll(/name:\s*'(newsclaw_[^']+)'/g)].map(match => match[1])
   const expected = [
@@ -32,9 +32,16 @@ test('registers the exact 22 NewsClaw bridge tool names', () => {
     'newsclaw_save_local',
     'newsclaw_remove_saved',
     'newsclaw_list_saved',
+    'newsclaw_list_web_monitors',
+    'newsclaw_add_web_monitor',
+    'newsclaw_check_web_monitor',
+    'newsclaw_set_web_monitor_state',
+    'newsclaw_get_web_monitor_history',
+    'newsclaw_list_monitor_notifications',
+    'newsclaw_act_on_monitor_notification',
   ]
   assert.deepEqual(names, expected)
-  assert.equal(new Set(names).size, 22)
+  assert.equal(new Set(names).size, 29)
   assert.doesNotMatch(source, /openbiliclaw_|\bbvid\b|bilibili|danmaku/i)
 })
 
@@ -168,6 +175,42 @@ test('notification open is durably acknowledged with article identity', () => {
   assert.match(api, /article_id: articleId, request_id: requestId/)
   assert.match(notifications, /acknowledgeNotification\(base, notice\.article_id, requestId\)/)
   assert.match(notifications, /then\(\(\) => \{\s*onHandled\(notice\.article_id\)/)
+})
+
+test('P5 webpage/PDF monitoring shares one durable truth across panel, inbox and Agent tools', () => {
+  const api = read('src/client/api.ts')
+  const library = read('src/client/library.tsx')
+  const notifications = read('src/client/notifications.tsx')
+  const panel = read('src/client/NewsClawPanel.tsx')
+  const tools = read('src/tools.ts')
+  assert.match(library, /key: 'monitoring', label: '网页监控'/)
+  assert.match(api, /'\/api\/news\/monitors'/)
+  assert.match(api, /'\/api\/news\/monitor-notifications\?limit=100'/)
+  assert.match(library, /正文真变了才进入事件档案/)
+  assert.doesNotMatch(library, /预测|概率|情绪评分/)
+  assert.match(api, /initialCheckStatus:\s*str\(check\.status\)/)
+  assert.match(library, /created\.initialCheckStatus === 'baseline' \|\| created\.item\.has_baseline/)
+  assert.match(library, /首次读取没有建立基线/)
+  assert.match(library, /delete next\[item\.monitor_id\]/)
+  assert.match(library, /historyWasOpen[\s\S]+fetchWebMonitorHistory\(base, item\.monitor_id\)/)
+  assert.match(api, /Promise<WebMonitorCheckResult>/)
+  assert.match(library, /checkStatus === 'failed'/)
+  assert.match(library, /checkStatus === 'retry_wait'/)
+  assert.match(library, /busyIdsRef\.current\.has\(item\.monitor_id\)/)
+  assert.match(library, /item\.current_version > cached\.monitor\.current_version/)
+  assert.match(library, /historyErrors/)
+  assert.match(library, /记录尚未载入/)
+  assert.match(library, /Math\.max\(history\.monitor\.current_version, history\.versions\.length\)/)
+  assert.match(notifications, /actOnWebMonitorNotification/)
+  assert.match(notifications, /notice\.kind === 'recovered'/)
+  assert.match(notifications, /window\.open\('about:blank', '_blank'\)/)
+  assert.match(notifications, /pendingWindow\.location\.replace\(monitorUrl\)/)
+  assert.match(panel, /dsh:monitor:delivered:/)
+  assert.match(panel, /handledMonitorNotifications/)
+  assert.match(panel, /monitorNotificationGeneration/)
+  assert.match(panel, /commitMonitorNotifications/)
+  assert.match(tools, /newsclaw_add_web_monitor[\s\S]+--request-id/)
+  assert.match(tools, /newsclaw_act_on_monitor_notification[\s\S]+--request-id/)
 })
 
 test('news UI does not expose video-platform vocabulary or logic', () => {

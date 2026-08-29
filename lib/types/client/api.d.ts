@@ -324,6 +324,69 @@ export interface NewsBootstrapStatus {
     profile_ready: boolean;
     detail: string;
 }
+/** One durable public webpage/PDF monitor. Worker leases and validators never reach the UI. */
+export interface WebMonitorItem {
+    monitor_id: string;
+    event_id: string;
+    label: string;
+    display_url: string;
+    content_kind: string;
+    status: string;
+    current_version: number;
+    change_count: number;
+    unread_count: number;
+    has_baseline: boolean;
+    last_success_at: string;
+    next_check_at: string;
+    last_error: string;
+}
+export interface WebMonitorCreateResult {
+    item: WebMonitorItem;
+    initialCheckStatus: string;
+}
+export interface WebMonitorCheckResult {
+    status: string;
+    error: string;
+    retryable: boolean;
+}
+export interface WebMonitorVersion {
+    snapshot_id: string;
+    ordinal: number;
+    title: string;
+    content_kind: string;
+    classification: string;
+    suppression_reason: string;
+    byte_count: number;
+    fetched_at: string;
+}
+export interface WebMonitorDiff {
+    diff_id: string;
+    change_id: string;
+    classification: string;
+    summary: string;
+    added: string[];
+    removed: string[];
+    created_at: string;
+}
+export interface WebMonitorHistory {
+    monitor: WebMonitorItem;
+    versions: WebMonitorVersion[];
+    diffs: WebMonitorDiff[];
+}
+export interface WebMonitorNotification {
+    delivery_id: string;
+    monitor_id: string;
+    event_id: string;
+    change_id: string;
+    kind: string;
+    title: string;
+    body: string;
+    label: string;
+    display_url: string;
+    created_at: string;
+    read_at: string;
+    dismissed_at: string;
+}
 /** Request error carrying the HTTP status and server detail. */
 export declare class ApiError extends Error {
     readonly status: number;
@@ -523,4 +586,22 @@ export declare function fetchAutostartStatus(base: string, signal?: AbortSignal)
 export declare function applyAutostart(base: string, enabled: boolean, signal?: AbortSignal): Promise<boolean>;
 /** Read the NewsClaw-only first setup status; this endpoint never rebuilds a ready profile. */
 export declare function fetchNewsBootstrapStatus(base: string, signal?: AbortSignal): Promise<NewsBootstrapStatus>;
+/** Read the same durable monitor ledger used by the desktop Web UI and Agent tools. */
+export declare function fetchWebMonitors(base: string, signal?: AbortSignal): Promise<WebMonitorItem[]>;
+/** Add a monitor and wait for its first baseline to be established. */
+export declare function createWebMonitor(base: string, input: {
+    url: string;
+    label?: string;
+    focus?: string;
+    intervalMinutes?: number;
+    requestId?: string;
+}, signal?: AbortSignal): Promise<WebMonitorCreateResult>;
+export declare function checkWebMonitor(base: string, monitorId: string, requestId?: string, signal?: AbortSignal): Promise<WebMonitorCheckResult>;
+export declare function setWebMonitorState(base: string, monitorId: string, action: 'pause' | 'resume' | 'remove', signal?: AbortSignal): Promise<void>;
+export declare function fetchWebMonitorHistory(base: string, monitorId: string, signal?: AbortSignal): Promise<WebMonitorHistory>;
+export declare function fetchWebMonitorNotifications(base: string, signal?: AbortSignal): Promise<{
+    items: WebMonitorNotification[];
+    unreadCount: number;
+}>;
+export declare function actOnWebMonitorNotification(base: string, deliveryId: string, action: 'delivered' | 'read' | 'dismiss', requestId: string, signal?: AbortSignal): Promise<void>;
 //# sourceMappingURL=api.d.ts.map
