@@ -112,6 +112,6 @@ timeoutMs: 300000
 
 本衍生插件保留上游声明：
 
-- DSH 插件代码：BSD-3-Clause，见 `LICENSE`
-- OpenBiliClaw 衍生部分：MIT，见 `licenses/OpenBiliClaw-MIT.txt`
+- DSH 插件代码：BSD-3-Clause，见 `LICENSE`；上游项目为 [whiteguo233/dsh-openbiliclaw](https://github.com/whiteguo233/dsh-openbiliclaw)
+- OpenBiliClaw 衍生部分：MIT，见 `licenses/OpenBiliClaw-MIT.txt`；上游项目为 [whiteguo233/OpenBiliClaw](https://github.com/whiteguo233/OpenBiliClaw)
 - 归属与衍生说明：见 `NOTICE`
