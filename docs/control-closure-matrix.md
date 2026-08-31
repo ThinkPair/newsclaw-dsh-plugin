@@ -1,7 +1,7 @@
 # DSH 控件与 Agent 工具闭环矩阵
 
-> 审计基线：`31cc0c257453eb59d4d9ab9a705e6cadd517a5be`  
-> 目标：每个可见操作和 29 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
+> 初始审计基线：`31cc0c257453eb59d4d9ab9a705e6cadd517a5be`；2026-08-31 复核为 31 个工具。
+> 目标：每个可见操作和 31 个 Agent Bridge 工具都能回答“在哪里处理、调哪个接口、什么被保存、怎么判断成功、失败怎么告知、超时后怎么重试”。
 
 ## 公共合同
 
@@ -76,7 +76,7 @@
 | 开机自启动 | `POST /api/autostart/apply` → 必须 `GET /api/autostart-status` 复核 | OS 自启动项 | 只有 apply=true 且复核值一致才显示成功 | 15s+10s；失败再读真实值；无法复核时标记未知并禁用，不误显示关闭 |
 | 打开新闻爪电脑版 | `window.open(<apiUrl>/web)` | 无额外配置副本 | 进入主配置中心 | DSH 仍保留只读已生效值；不写旧 `/api/config` |
 
-## 29 个 Agent Bridge 工具
+## 31 个 Agent Bridge 工具
 
 所有工具都由 `registerBridgeTools` 注册，再由 `Bridge.run(command, argv)` 调用 `POST <apiUrl>/api/agent-bridge`。工具超时是 Harness 插件行的 `timeoutMs`（1秒–15 分钟夹取，默认 5 分钟）。客户端不自动重放；读操作可重试，写操作必须复用原稳定 ID。
 
@@ -100,21 +100,23 @@
 | 16 | `newsclaw_respond_avoidance_probe` | `respond-avoidance-probe`；confirm/reject/defer/chat | 避雷终态/冷却/画像持久 | 必填 requestId；同回答重试复用 ID |
 | 17 | `newsclaw_get_profile` | `get-profile`；只读当前五层画像 | 返回兴趣/避雷/特质 | 可直接重试 |
 | 18 | `newsclaw_get_profile_edit_state` | `profile-edit-state`；只读 AI 推断与人工 overlay | 返回完整编辑态 | 可直接重试 |
-| 19 | `newsclaw_edit_profile` | `edit-profile`；set/add/remove/reset 人工 overlay | 人工修改持久并覆盖 AI 推断 | 操作枚举本地校验；失败不声称已修改；查询 edit state 后再决定是否重试 |
+| 19 | `newsclaw_edit_profile` | `edit-profile`；set/add/remove/reset 人工 overlay | 人工修改持久并覆盖 AI 推断；同进程同 ID/同内容合并 | 必填稳定 `requestId`；同 ID 换内容拒绝；传输失败可复用原 ID。插件重启会清空本地幂等缓存，跨重启仍应先查询 edit state |
 | 20 | `newsclaw_save_local` | `save-local`；favorite/watch_later 本地成员关系 | 本地数据库写入，不同步媒体账号 | 列表枚举本地校验；超时后先 list_saved 确认再决定重试 |
 | 21 | `newsclaw_remove_saved` | `remove-saved`；移除本地成员关系 | 本地数据库更新 | 列表枚举本地校验；超时后先 list_saved 确认 |
 | 22 | `newsclaw_list_saved` | `list-saved`；只读 favorite/watch_later | 返回 1–200 条 | 可直接重试 |
-| 23 | `newsclaw_list_web_monitors` | `web-monitor-list`；只读持久监控与运行态 | 返回基线版本、确认变化数、下次检查 | 可直接重试；不回显 ETag/worker lease |
-| 24 | `newsclaw_add_web_monitor` | `web-monitor-add`；安全校验 URL、建事件档案与首个基线 | 首轮只建基线，不产生假变化 | 必填 requestId；私网/本机/凭据 URL 拒绝；同请求重试复用 ID |
-| 25 | `newsclaw_check_web_monitor` | `web-monitor-check`；立即抓取、规范化和正文差异判断 | 真变化原子写入版本、事件和站内消息 | 必填 requestId；并发检查会合流；暂停/删除明确拒绝 |
-| 26 | `newsclaw_set_web_monitor_state` | `web-monitor-set-state`；pause/resume/remove | 状态持久，remove 为软删除 | 枚举本地校验；历史版本和事件不删除 |
-| 27 | `newsclaw_get_web_monitor_history` | `web-monitor-history`；只读检查/版本/差异 | 返回最多 200 行每分区 | 可直接重试；不回显 worker lease |
-| 28 | `newsclaw_list_monitor_notifications` | `web-monitor-notifications`；只读未读/历史消息 | 返回持久 delivery ID 和事件关联 | 可直接重试；默认只读未处理消息 |
-| 29 | `newsclaw_act_on_monitor_notification` | `web-monitor-notification-action`；delivered/read/dismiss | 消息终态持久 | 必填 requestId；同 ID 改动作由后端冲突拒绝 |
+| 23 | `newsclaw_search_web` | `research-search`；Tavily basic Search 与本地 TTL 证据缓存 | 返回公开 URL、证据片段与来源，不写画像/推荐池 | 用户或 Agent 明确提出研究问题才调用；敏感查询本地拒绝；失败可直接重试 |
+| 24 | `newsclaw_extract_evidence` | `research-extract`；从 1–3 个明确公开 URL 抽取证据 | 返回有界片段与来源，不把解释冒充事实 | 本机/私网/IPv6 本机/带凭据 URL 在插件侧拒绝；后端再次校验；失败可重试 |
+| 25 | `newsclaw_list_web_monitors` | `web-monitor-list`；只读持久监控与运行态 | 返回基线版本、确认变化数、下次检查 | 可直接重试；不回显 ETag/worker lease |
+| 26 | `newsclaw_add_web_monitor` | `web-monitor-add`；安全校验 URL、建事件档案与首个基线 | 首轮只建基线，不产生假变化 | 必填 requestId；私网/本机/凭据 URL 拒绝；同请求重试复用 ID |
+| 27 | `newsclaw_check_web_monitor` | `web-monitor-check`；立即抓取、规范化和正文差异判断 | 真变化原子写入版本、事件和站内消息 | 必填 requestId；并发检查会合流；暂停/删除明确拒绝 |
+| 28 | `newsclaw_set_web_monitor_state` | `web-monitor-set-state`；pause/resume/remove | 状态持久，remove 为软删除 | 枚举本地校验；历史版本和事件不删除 |
+| 29 | `newsclaw_get_web_monitor_history` | `web-monitor-history`；只读检查/版本/差异 | 返回最多 200 行每分区 | 可直接重试；不回显 worker lease |
+| 30 | `newsclaw_list_monitor_notifications` | `web-monitor-notifications`；只读未读/历史消息 | 返回持久 delivery ID 和事件关联 | 可直接重试；默认只读未处理消息 |
+| 31 | `newsclaw_act_on_monitor_notification` | `web-monitor-notification-action`；delivered/read/dismiss | 消息终态持久 | 必填 requestId；同 ID 改动作由后端冲突拒绝 |
 
 ## 加载、卸载与隔离
 
-- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 29 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
+- Node 端先解析经过本机白名单约束的连接，再注册 Skill 和 31 个工具。工具注册是原子的：任何一个注册失败会倒序注销前面所有工具。
 - 浏览器端面板、入口按钮和布局任一步失败，会回收已建立的一切；异常仅记录在控制台，Harness 主界面继续使用。
 - 卸载会关闭 WebSocket，移除 DOM 列/拖动柄/入口，取消订阅并注销 Skill/工具。
 - CSS 热加载采用同 ID upsert，替换内容而不叠加旧样式。

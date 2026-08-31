@@ -1,6 +1,6 @@
 # 新闻爪 DSH 插件
 
-新闻爪（NewsClaw）的 DeepSeek Harness 客户端插件。它把同一个本机新闻爪后端接入 DSH：右侧栏、推荐、内容库、网页/PDF 变化监控、画像、对话、消息，以及 29 个 `newsclaw_*` Agent Bridge 工具。
+新闻爪（NewsClaw）的 DeepSeek Harness 客户端插件。它把同一个本机新闻爪后端接入 DSH：右侧栏、推荐、内容库、网页/PDF 变化监控、画像、对话、消息，以及 31 个 `newsclaw_*` Agent Bridge 工具。
 
 本目录是独立开发源码，不会在构建时读取、覆盖或启动当前已安装插件。
 
@@ -22,7 +22,7 @@
 
 ## Agent Bridge 工具
 
-插件注册以下 29 个工具，全部请求同一个 `/api/agent-bridge`：
+插件注册以下 31 个工具，全部请求同一个 `/api/agent-bridge`：
 
 1. `newsclaw_get_capabilities`
 2. `newsclaw_recommend`
@@ -46,15 +46,17 @@
 20. `newsclaw_save_local`
 21. `newsclaw_remove_saved`
 22. `newsclaw_list_saved`
-23. `newsclaw_list_web_monitors`
-24. `newsclaw_add_web_monitor`
-25. `newsclaw_check_web_monitor`
-26. `newsclaw_set_web_monitor_state`
-27. `newsclaw_get_web_monitor_history`
-28. `newsclaw_list_monitor_notifications`
-29. `newsclaw_act_on_monitor_notification`
+23. `newsclaw_search_web`
+24. `newsclaw_extract_evidence`
+25. `newsclaw_list_web_monitors`
+26. `newsclaw_add_web_monitor`
+27. `newsclaw_check_web_monitor`
+28. `newsclaw_set_web_monitor_state`
+29. `newsclaw_get_web_monitor_history`
+30. `newsclaw_list_monitor_notifications`
+31. `newsclaw_act_on_monitor_notification`
 
-反馈、探针、惊喜、监控添加/检查和监控消息响应使用稳定的 `requestId`；持久对话使用稳定的 `turnId`。同一次动作在超时后重试必须复用原 ID，另一动作不得复用。详细调用规范见 `skills/newsclaw-adapter/SKILL.md`。
+反馈、探针、惊喜、画像编辑、监控添加/检查和监控消息响应使用稳定的 `requestId`；持久对话使用稳定的 `turnId`。同一次动作在超时后重试必须复用原 ID，另一动作不得复用。研究 Search/Extract 只在用户或 Agent 明确提出问题时调用，不是后台新闻源；Extract 会在进入后端前拒绝本机、私网、带凭据和不安全 URL。详细调用规范见 `skills/newsclaw-adapter/SKILL.md`。
 
 ## 本地验证
 
@@ -98,13 +100,13 @@ timeoutMs: 300000
 
 - “运行状态”读取 `/api/news/runtime`，展示后端确认已经生效的候选池、刷新、反馈、后台 AI 与重试参数。
 - “新闻来源”读取 `/api/news/sources`，只展示媒体、技术提供方、健康状态、最后成功时间和错误，不在 DSH 里复制一套来源编辑器。
-- “插件连接”只读展示插件行的 `apiUrl` 和 `timeoutMs`；其中 `timeoutMs` 是 29 个 Agent Bridge 工具的单次总预算。
+- “插件连接”只读展示插件行的 `apiUrl` 和 `timeoutMs`；其中 `timeoutMs` 是 31 个 Agent Bridge 工具的单次总预算。
 - 开机自启动开关调用专用自启动接口，是设置页唯一会修改后端状态的项目。
 - AI v2 实例与路由、DeepSeek/Tushare 凭据、新闻源开关、自定义 RSS、刷新和重试参数统一在新闻爪电脑版设置。
 - DSH 设置页不会再 GET/PUT 旧 `/api/config`，因此不会出现“保存成功但新闻系统实际没采用”的假配置。
 
 更完整的字段边界见 [docs/settings-contract.md](docs/settings-contract.md)。
-界面控件与 29 个 Agent 工具的端到端闭环见 [docs/control-closure-matrix.md](docs/control-closure-matrix.md)。
+界面控件与 31 个 Agent 工具的端到端闭环见 [docs/control-closure-matrix.md](docs/control-closure-matrix.md)。
 
 ## 许可
 
