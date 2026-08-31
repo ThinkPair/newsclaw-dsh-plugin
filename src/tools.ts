@@ -10,6 +10,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { isIP } from 'node:net'
 import type { Bridge } from './bridge.ts'
 
 /** Plain-text output: the canonical JSON value renders as its text form. */
@@ -66,6 +67,84 @@ function requestId(value: unknown): string {
   return stableKey(value, 'requestId')
 }
 
+function ipv4Octets(host: string): number[] | null {
+  const parts = host.split('.')
+  if (parts.length !== 4) return null
+  const octets = parts.map(part => Number(part))
+  return octets.every(value => Number.isInteger(value) && value >= 0 && value <= 255)
+    ? octets
+    : null
+}
+
+/** Match Python ipaddress's public-only boundary for literal IPv4 inputs. */
+function isPublicIpv4(host: string): boolean {
+  const octets = ipv4Octets(host)
+  if (!octets) return false
+  const a = octets[0]!
+  const b = octets[1]!
+  const c = octets[2]!
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false
+  if (a === 100 && b >= 64 && b <= 127) return false
+  if (a === 169 && b === 254) return false
+  if (a === 172 && b >= 16 && b <= 31) return false
+  if (a === 192 && b === 168) return false
+  if (a === 192 && b === 0 && c === 0) return false
+  if (a === 192 && b === 0 && c === 2) return false
+  if (a === 198 && (b === 18 || b === 19)) return false
+  if (a === 198 && b === 51 && c === 100) return false
+  if (a === 203 && b === 0 && c === 113) return false
+  return true
+}
+
+function ipv6Words(host: string): number[] | null {
+  const halves = host.toLowerCase().split('::')
+  if (halves.length > 2) return null
+  const parseHalf = (half: string): number[] | null => {
+    if (half === '') return []
+    const words: number[] = []
+    for (const part of half.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(part)) return null
+      words.push(Number.parseInt(part, 16))
+    }
+    return words
+  }
+  const left = parseHalf(halves[0] ?? '')
+  const right = parseHalf(halves[1] ?? '')
+  if (!left || !right) return null
+  if (halves.length === 1) return left.length === 8 ? left : null
+  const zeros = 8 - left.length - right.length
+  if (zeros < 1) return null
+  return [...left, ...Array.from({ length: zeros }, () => 0), ...right]
+}
+
+/** Reject every directly-addressed non-global literal before it reaches NewsClaw. */
+function isPublicIpLiteral(host: string): boolean {
+  const version = isIP(host)
+  if (version === 4) return isPublicIpv4(host)
+  if (version !== 6) return false
+  const words = ipv6Words(host)
+  if (!words) return false
+  const first = words[0]!
+  const second = words[1]!
+  const ipv4Mapped = words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff
+  if (ipv4Mapped) {
+    const mappedHigh = words[6]!
+    const mappedLow = words[7]!
+    const mapped = [mappedHigh >> 8, mappedHigh & 0xff, mappedLow >> 8, mappedLow & 0xff].join('.')
+    return isPublicIpv4(mapped)
+  }
+  if (words.every(word => word === 0)) return false // ::/128 unspecified
+  if (words.slice(0, 7).every(word => word === 0) && words[7] === 1) return false
+  if ((first & 0xfe00) === 0xfc00) return false // fc00::/7 unique-local
+  if ((first & 0xffc0) === 0xfe80) return false // fe80::/10 link-local
+  if ((first & 0xff00) === 0xff00) return false // ff00::/8 multicast
+  if (first === 0x0100 && words.slice(1, 4).every(word => word === 0)) return false
+  if (first === 0x2001 && second === 0x0db8) return false // documentation-only
+  // IPv4-compatible and other ::/96 special forms are not public destinations.
+  if (words.slice(0, 6).every(word => word === 0)) return false
+  return true
+}
+
 /** Public research inputs must never cross into local or credential-bearing URLs. */
 function publicHttpUrl(value: unknown, label: string): string {
   const text = nonEmpty(value, label)
@@ -74,15 +153,14 @@ function publicHttpUrl(value: unknown, label: string): string {
   if (!['http:', 'https:'].includes(url.protocol) || url.username !== '' || url.password !== '') {
     throw new Error(`newsclaw: ${label} must be a public http(s) URL without credentials`)
   }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  const privateIpv6 = host.includes(':') && (
-    host === '::1' || host.startsWith('fc') || host.startsWith('fd')
-    || host.startsWith('fe80:') || host.startsWith('::ffff:127.')
-  )
-  const blocked = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')
-    || host === '0.0.0.0' || /^127\./.test(host) || /^10\./.test(host)
-    || /^192\.168\./.test(host) || /^169\.254\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || privateIpv6
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  const literalVersion = isIP(host)
+  const blocked = host === 'localhost'
+    || host.endsWith('.localhost')
+    || host.endsWith('.local')
+    || host.endsWith('.internal')
+    || (literalVersion === 0 && !host.includes('.'))
+    || (literalVersion !== 0 && !isPublicIpLiteral(host))
   if (blocked) throw new Error(`newsclaw: ${label} must point to a public web page`)
   return url.toString()
 }
@@ -102,7 +180,22 @@ function positiveInt(value: unknown, label: string): number {
  */
 export function registerBridgeTools(ctx: { tools: { register(def: unknown): () => void } }, bridge: Bridge): Array<() => void> {
   const registered: Array<() => void> = []
-  const profileEditRequests = new Map<string, { fingerprint: string; promise: ReturnType<Bridge['run']> }>()
+  type ProfileEditRequest = {
+    fingerprint: string
+    outcome: 'in_flight' | 'succeeded' | 'uncertain'
+    promise: ReturnType<Bridge['run']> | null
+  }
+  class ProfileEditUncertainError extends Error {
+    readonly retryable = true
+    readonly outcomeUncertain = true
+
+    constructor(cause: unknown) {
+      const detail = cause instanceof Error ? cause.message : String(cause)
+      super(`newsclaw: profile edit outcome is uncertain; retry the exact same payload with the same requestId (${detail})`, { cause })
+      this.name = 'ProfileEditUncertainError'
+    }
+  }
+  const profileEditRequests = new Map<string, ProfileEditRequest>()
   const runProfileEdit = (id: string, argv: string[]): ReturnType<Bridge['run']> => {
     const fingerprint = JSON.stringify(argv)
     const existing = profileEditRequests.get(id)
@@ -110,18 +203,45 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
       if (existing.fingerprint !== fingerprint) {
         return Promise.reject(new Error('newsclaw: requestId was already used for a different profile edit'))
       }
+      if (existing.promise) return existing.promise
+      existing.outcome = 'in_flight'
+      existing.promise = Promise.resolve()
+        .then(() => bridge.run('edit-profile', argv))
+        .then(value => {
+          existing.outcome = 'succeeded'
+          return value
+        })
+        .catch(error => {
+          existing.outcome = 'uncertain'
+          existing.promise = null
+          throw new ProfileEditUncertainError(error)
+        })
       return existing.promise
     }
-    const promise = bridge.run('edit-profile', argv).catch(error => {
-      profileEditRequests.delete(id)
-      throw error
-    })
-    profileEditRequests.set(id, { fingerprint, promise })
+    const request: ProfileEditRequest = { fingerprint, outcome: 'in_flight', promise: null }
+    profileEditRequests.set(id, request)
+    request.promise = Promise.resolve()
+      .then(() => bridge.run('edit-profile', argv))
+      .then(value => {
+        request.outcome = 'succeeded'
+        return value
+      })
+      .catch(error => {
+        // A transport failure can happen after the backend applied the edit.
+        // Keep the identity/fingerprint binding and permit only an exact retry.
+        request.outcome = 'uncertain'
+        request.promise = null
+        throw new ProfileEditUncertainError(error)
+      })
     if (profileEditRequests.size > 256) {
-      const oldest = profileEditRequests.keys().next().value
-      if (typeof oldest === 'string' && oldest !== id) profileEditRequests.delete(oldest)
+      for (const [candidateId, candidate] of profileEditRequests) {
+        if (candidateId !== id && candidate.outcome === 'succeeded') {
+          profileEditRequests.delete(candidateId)
+          break
+        }
+      }
     }
-    return promise
+    return request.promise
   }
   const register = (definition: unknown): (() => void) => {
     try {
@@ -432,7 +552,7 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
 
     register(defineTool({
       name: 'newsclaw_edit_profile',
-      description: 'Apply one deterministic profile overlay edit. REQUIRES a stable requestId; an exact retry is coalesced locally and reusing the identity for different content is rejected.',
+      description: 'Apply one deterministic profile overlay edit. REQUIRES a stable requestId; an exact retry is coalesced locally and reusing the identity for different content is rejected. If a transport result is uncertain, retry only the exact same payload with the same requestId.',
       parameters: {
         target: str('Field path or polarity (e.g. core.core_traits, likes, dislikes).', true),
         op: str('One of: set, add, remove, reset.', true),

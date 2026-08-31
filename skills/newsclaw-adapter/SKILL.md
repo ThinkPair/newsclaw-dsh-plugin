@@ -1,6 +1,6 @@
 ---
 name: newsclaw-adapter
-description: Use the 29 local NewsClaw Agent Bridge tools for personalized news, profile state, dialogue, saved lists, and deterministic public webpage/PDF change monitoring. Do not use them for trading, broad web crawling, or unrequested external actions.
+description: Use the 31 local NewsClaw Agent Bridge tools for personalized news, profile state, dialogue, saved lists, bounded Tavily research, and deterministic public webpage/PDF change monitoring. Do not use them for trading, broad web crawling, or unrequested external actions.
 ---
 
 # 新闻爪 Agent Bridge
@@ -18,7 +18,7 @@ system.
 4. Use `newsclaw_recommend`, `newsclaw_reshuffle`, or
    `newsclaw_append_recommendations` to read the shared recommendation pool.
 
-## The 29 tools
+## The 31 tools
 
 - Contract and pool: `newsclaw_get_capabilities`, `newsclaw_recommend`,
   `newsclaw_reshuffle`, `newsclaw_append_recommendations`
@@ -36,6 +36,8 @@ system.
   `newsclaw_get_profile_edit_state`, `newsclaw_edit_profile`
 - Local library: `newsclaw_save_local`, `newsclaw_remove_saved`,
   `newsclaw_list_saved`
+- Bounded Tavily research: `newsclaw_search_web`,
+  `newsclaw_extract_evidence`
 - Public document monitoring: `newsclaw_list_web_monitors`,
   `newsclaw_add_web_monitor`, `newsclaw_check_web_monitor`,
   `newsclaw_set_web_monitor_state`, `newsclaw_get_web_monitor_history`,
@@ -53,9 +55,13 @@ system.
    position sizing, broker actions or guaranteed-return language.
 5. NewsClaw does not validate market numbers. Attribute claims to the article
    and preserve the original URL and publication time.
-6. Feedback, probe and spotlight writes need a stable `requestId`; durable
-   `newsclaw_chat` needs a stable `turnId`. Reuse it only for retries of the
-   exact same action/turn; never reuse it for different content or messages.
+6. Feedback, probe, spotlight and `newsclaw_edit_profile` writes need a stable
+   `requestId`; durable `newsclaw_chat` needs a stable `turnId`. Reuse it only
+   for retries of the exact same action/turn; never reuse it for different
+   content or messages. If a profile edit outcome is uncertain, first read
+   `newsclaw_get_profile_edit_state`, then use the same `requestId` to retry
+   only the exact same payload; the binding is process-local and survives that
+   uncertain failure, but not a DSH process restart.
 7. User edits made through `newsclaw_edit_profile` override AI inference.
 8. `newsclaw_save_local` is local-only. Never sync to media accounts or other
    external services.

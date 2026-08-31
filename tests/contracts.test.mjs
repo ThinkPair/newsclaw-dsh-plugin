@@ -130,6 +130,8 @@ test('learning writes are idempotent and credentials are redacted', () => {
   assert.match(tools, /--request-id[\s\S]+bridge\.run\('respond-avoidance-probe'/)
   assert.match(tools, /requestId.+profile edit/i)
   assert.match(tools, /requestId was already used for a different profile edit/)
+  assert.match(tools, /outcome is uncertain/)
+  assert.match(tools, /retry the exact same payload/)
   assert.match(api, /interest-probes\/respond[\s\S]+request_id/)
   assert.match(api, /avoidance-probes\/respond[\s\S]+request_id/)
   assert.match(tools, /newsclaw_chat[\s\S]+turnId[\s\S]+--turn-id/)
@@ -143,6 +145,28 @@ test('client CSS is upserted on a hot reload', () => {
   assert.match(build, /const existing = document\.querySelector/)
   assert.match(build, /if \(tag\.textContent !== css\) tag\.textContent = css/)
   assert.match(build, /if \(existing === null\) document\.head\.appendChild\(tag\)/)
+  assert.match(build, /stableCssFilename/)
+  assert.match(build, /filename: stableFilename/)
+  assert.doesNotMatch(build, /filename:\s*file[,}]/)
+})
+
+test('built client artifacts never embed the checkout path', () => {
+  const normalizedRoot = root.replaceAll('\\', '/')
+  for (const path of ['lib/client.js', 'lib/client.js.map']) {
+    const artifact = read(path).replaceAll('\\', '/')
+    assert.equal(artifact.includes(normalizedRoot), false, `${path} leaked the checkout path`)
+    assert.doesNotMatch(artifact, /\/worktrees\/dsh-[^/]+/i)
+  }
+})
+
+test('packaged adapter skill advertises all 31 tools and the profile retry boundary', () => {
+  const skill = read('skills/newsclaw-adapter/SKILL.md')
+  assert.match(skill, /Use the 31 local NewsClaw Agent Bridge tools/)
+  assert.match(skill, /## The 31 tools/)
+  assert.match(skill, /newsclaw_search_web/)
+  assert.match(skill, /newsclaw_extract_evidence/)
+  assert.match(skill, /newsclaw_edit_profile[\s\S]+outcome is uncertain/)
+  assert.match(skill, /same `requestId`[\s\S]+exact same payload/)
 })
 
 test('upstream license notices ship with the source package', () => {

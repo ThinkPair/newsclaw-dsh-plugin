@@ -105,6 +105,19 @@ test('tool input validation blocks unsupported or ambiguous writes locally', asy
   await assert.rejects(byName('newsclaw_edit_profile').execute({ target: 'likes', op: 'add', value: '宏观' }), /requestId is required|missing required property "requestId"/)
   await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['http://127.0.0.1/private'] }), /public web page/)
   await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['http://[::1]/private'] }), /public web page/)
+  for (const url of [
+    'http://localhost./private',
+    'http://[::]/private',
+    'http://[::ffff:10.0.0.1]/private',
+    'http://[fe90::1]/private',
+    'http://intranet/private',
+  ]) {
+    await assert.rejects(
+      byName('newsclaw_extract_evidence').execute({ query: 'x', urls: [url] }),
+      /public web page/,
+      url,
+    )
+  }
   await assert.rejects(byName('newsclaw_respond_interest_probe').execute({ domain: 'x', response: 'confirm', requestId: 'x'.repeat(401) }), /at most 400/)
   await assert.rejects(byName('newsclaw_add_web_monitor').execute({ url: 'https://example.com', requestId: 'x', intervalMinutes: 2 }), /between 5 and 10080/)
   await assert.rejects(byName('newsclaw_set_web_monitor_state').execute({ monitorId: 'm', action: 'delete-forever' }), /must be one of/)
@@ -131,7 +144,7 @@ test('profile edit requestId coalesces exact retries and rejects identity confli
   )
 })
 
-test('profile edit requestId remains retryable after a failed transport', async () => {
+test('profile edit requestId stays bound after an uncertain failure and only exact retry can run', async () => {
   const definitions = []
   let attempts = 0
   const bridge = {
@@ -145,7 +158,18 @@ test('profile edit requestId remains retryable after a failed transport', async 
   registerBridgeTools({ tools: { register(def) { definitions.push(def); return () => undefined } } }, bridge)
   const edit = definitions.find(item => item.name === 'newsclaw_edit_profile')
   const args = { target: 'likes', op: 'add', value: '宏观', requestId: 'profile-edit-retry' }
-  await assert.rejects(edit.execute(args), /temporary transport failure/)
+  await assert.rejects(edit.execute(args), error => {
+    assert.match(error.message, /outcome is uncertain/)
+    assert.match(error.message, /retry the exact same payload/)
+    assert.equal(error.retryable, true)
+    assert.equal(error.outcomeUncertain, true)
+    return true
+  })
+  await assert.rejects(
+    edit.execute({ target: 'likes', op: 'remove', value: '宏观', requestId: 'profile-edit-retry' }),
+    /different profile edit/,
+  )
+  assert.equal(attempts, 1)
   assert.deepEqual(await edit.execute(args), { ok: true })
   assert.equal(attempts, 2)
 })

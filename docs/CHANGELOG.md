@@ -3,8 +3,9 @@
 ## 2.2.1 - 2026-08-31
 
 - 修复 2.2.0 增加网页监控工具时覆盖研究工具的问题，恢复 `newsclaw_search_web` 与 `newsclaw_extract_evidence`，与 7 个监控工具同时注册，总计 31 个 Agent Bridge 工具。
-- Extract 在进入后端前拒绝本机、私网、IPv6 本机、带凭据和不安全 URL；Tavily 仍只接受用户或 Agent 明确发起的按需研究，不成为后台新闻源。
-- `newsclaw_edit_profile` 现在强制稳定 `requestId`；进程内相同 ID 与相同编辑合并，相同 ID 换内容拒绝，传输失败可复用原 ID 重试。
+- Extract 在进入后端前拒绝尾点 localhost、单标签内网名、IPv4 私网/保留段、IPv6 未指定/回环/映射私网/链路本地/ULA/组播、带凭据和不安全 URL；Tavily 仍只接受用户或 Agent 明确发起的按需研究，不成为后台新闻源。
+- `newsclaw_edit_profile` 现在强制稳定 `requestId`；进程内相同 ID 与相同编辑合并，相同 ID 换内容拒绝。传输失败视为结果不确定，保留 ID→payload 绑定，只允许原 ID + 原 payload 重试，并在错误上明确 `retryable/outcomeUncertain`。
+- CSS Modules 使用稳定的 `src/client/...` 相对文件名参与 hash 与 sourcemap，跨 worktree 构建不再改变类名或嵌入开发机绝对路径。
 
 ## 2.2.0 - 2026-08-30
 

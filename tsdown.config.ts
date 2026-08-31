@@ -12,6 +12,7 @@ import { transform } from 'lightningcss'
 const ID = '@newsclaw/dsh-plugin'
 const CSS_PREFIX = '\0newsclaw-css:'
 const CSS_SUFFIX = '.mjs'
+const cssAssetPaths = new Map<string, string>()
 
 const PLATFORM_MODULES = [
   'react',
@@ -34,6 +35,15 @@ function sourceAssetPath(source: string, importer: string): string {
   const boundary = emitted.indexOf(marker)
   if (boundary < 0) return emitted
   return resolvePath(emitted.slice(0, boundary), 'src', emitted.slice(boundary + marker.length))
+}
+
+/** Stable identity for hashing/sourcemaps; never include a checkout path. */
+function stableCssFilename(file: string): string {
+  const normalized = file.replaceAll('\\', '/')
+  const sourceMarker = '/src/client/'
+  const sourceBoundary = normalized.lastIndexOf(sourceMarker)
+  if (sourceBoundary >= 0) return normalized.slice(sourceBoundary + 1)
+  return `src/client/${basename(normalized)}`
 }
 
 const nodeConfig: UserConfig = {
@@ -72,15 +82,19 @@ const clientConfig: UserConfig = {
     resolveId(source: string, importer: string | undefined) {
       if (!source.endsWith('.module.css')) return null
       const file = importer === undefined ? source : sourceAssetPath(source, importer)
-      return CSS_PREFIX + file + CSS_SUFFIX
+      const virtualId = CSS_PREFIX + stableCssFilename(file) + CSS_SUFFIX
+      cssAssetPaths.set(virtualId, file)
+      return virtualId
     },
     async load(virtualId: string) {
       if (!virtualId.startsWith(CSS_PREFIX)) return null
-      const file = virtualId.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+      const file = cssAssetPaths.get(virtualId)
+      if (!file) throw new Error(`Unknown NewsClaw CSS asset: ${virtualId}`)
+      const stableFilename = stableCssFilename(file)
       this.addWatchFile(file)
       const source = await readFile(file)
       const { code, exports: cssExports } = transform({
-        filename: file,
+        filename: stableFilename,
         code: source,
         cssModules: { pattern: '[hash]_[local]' },
         minify: true,
@@ -92,7 +106,7 @@ const clientConfig: UserConfig = {
       for (const [local, value] of Object.entries(cssExports ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
         classMap[local] = value.name
       }
-      const tagId = `${ID}/${basename(file)}`
+      const tagId = `${ID}/${basename(stableFilename)}`
       return [
         `const css = ${JSON.stringify(code.toString())};`,
         `const tagId = ${JSON.stringify(tagId)};`,
