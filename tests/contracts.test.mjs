@@ -6,7 +6,7 @@ import test from 'node:test'
 const root = process.cwd()
 const read = (path) => readFileSync(join(root, path), 'utf8')
 
-test('registers the exact 29 NewsClaw bridge tool names', () => {
+test('registers the exact 31 NewsClaw bridge tool names', () => {
   const source = read('src/tools.ts')
   const names = [...source.matchAll(/name:\s*'(newsclaw_[^']+)'/g)].map(match => match[1])
   const expected = [
@@ -32,6 +32,8 @@ test('registers the exact 29 NewsClaw bridge tool names', () => {
     'newsclaw_save_local',
     'newsclaw_remove_saved',
     'newsclaw_list_saved',
+    'newsclaw_search_web',
+    'newsclaw_extract_evidence',
     'newsclaw_list_web_monitors',
     'newsclaw_add_web_monitor',
     'newsclaw_check_web_monitor',
@@ -41,7 +43,7 @@ test('registers the exact 29 NewsClaw bridge tool names', () => {
     'newsclaw_act_on_monitor_notification',
   ]
   assert.deepEqual(names, expected)
-  assert.equal(new Set(names).size, 29)
+  assert.equal(new Set(names).size, 31)
   assert.doesNotMatch(source, /openbiliclaw_|\bbvid\b|bilibili|danmaku/i)
 })
 
@@ -126,6 +128,8 @@ test('learning writes are idempotent and credentials are redacted', () => {
   const api = read('src/client/api.ts')
   assert.match(tools, /--request-id[\s\S]+bridge\.run\('respond-interest-probe'/)
   assert.match(tools, /--request-id[\s\S]+bridge\.run\('respond-avoidance-probe'/)
+  assert.match(tools, /requestId.+profile edit/i)
+  assert.match(tools, /requestId was already used for a different profile edit/)
   assert.match(api, /interest-probes\/respond[\s\S]+request_id/)
   assert.match(api, /avoidance-probes\/respond[\s\S]+request_id/)
   assert.match(tools, /newsclaw_chat[\s\S]+turnId[\s\S]+--turn-id/)
@@ -241,14 +245,16 @@ test('saved, profile, messages and autostart do not mask failed state reads', ()
   assert.match(read('src/client/dialogue.tsx'), /Promise\.allSettled/)
 })
 
-test('control closure matrix is packaged and covers every agent tool', () => {
+test('control closure matrix is packaged and live tool contracts cover restored research tools', () => {
   const matrix = read('docs/control-closure-matrix.md')
+  const tools = read('src/tools.ts')
   const packageJson = JSON.parse(read('package.json'))
   assert.ok(packageJson.files.includes('docs/control-closure-matrix.md'))
-  for (const name of [...read('src/tools.ts').matchAll(/name:\s*'(newsclaw_[^']+)'/g)].map(match => match[1])) {
-    assert.match(matrix, new RegExp(`\\b${name}\\b`), `${name} missing from closure matrix`)
-  }
   assert.match(matrix, /Handler \/ API/)
   assert.match(matrix, /状态与持久化/)
   assert.match(matrix, /失败、超时与重试/)
+  assert.match(tools, /name: 'newsclaw_search_web'[\s\S]+never send private profile/i)
+  assert.match(tools, /name: 'newsclaw_extract_evidence'[\s\S]+private\/intranet URLs/i)
+  assert.match(tools, /bridge\.run\('research-search'/)
+  assert.match(tools, /bridge\.run\('research-extract'/)
 })

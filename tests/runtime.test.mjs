@@ -20,7 +20,7 @@ test('shared row config accepts only loopback HTTP(S) bases and finite budgets',
   assert.equal(resolveConfig({ skillPath: 123 }).skillPath instanceof URL, true)
 })
 
-test('all 29 definitions execute the exact adapter command', async () => {
+test('all 31 definitions execute the exact adapter command', async () => {
   const definitions = []
   const calls = []
   const bridge = {
@@ -47,10 +47,12 @@ test('all 29 definitions execute the exact adapter command', async () => {
     ['newsclaw_respond_avoidance_probe', { domain: '噪音', response: 'reject', requestId: 'avoid-1' }, 'respond-avoidance-probe'],
     ['newsclaw_get_profile', {}, 'get-profile'],
     ['newsclaw_get_profile_edit_state', {}, 'profile-edit-state'],
-    ['newsclaw_edit_profile', { target: 'core.core_traits', op: 'reset' }, 'edit-profile'],
+    ['newsclaw_edit_profile', { target: 'core.core_traits', op: 'reset', requestId: 'profile-1' }, 'edit-profile'],
     ['newsclaw_save_local', { listKind: 'favorite', articleId: 'article-1' }, 'save-local'],
     ['newsclaw_remove_saved', { listKind: 'favorite', articleId: 'article-1' }, 'remove-saved'],
     ['newsclaw_list_saved', { listKind: 'watch_later' }, 'list-saved'],
+    ['newsclaw_search_web', { query: '央行政策', topic: 'news' }, 'research-search'],
+    ['newsclaw_extract_evidence', { query: '政策变化', urls: ['https://example.com/policy'] }, 'research-extract'],
     ['newsclaw_list_web_monitors', {}, 'web-monitor-list'],
     ['newsclaw_add_web_monitor', { url: 'https://example.com/policy', requestId: 'monitor-add-1' }, 'web-monitor-add'],
     ['newsclaw_check_web_monitor', { monitorId: 'monitor-1', requestId: 'monitor-check-1' }, 'web-monitor-check'],
@@ -59,7 +61,7 @@ test('all 29 definitions execute the exact adapter command', async () => {
     ['newsclaw_list_monitor_notifications', {}, 'web-monitor-notifications'],
     ['newsclaw_act_on_monitor_notification', { deliveryId: 'notice-1', action: 'read', requestId: 'notice-read-1' }, 'web-monitor-notification-action'],
   ]
-  assert.equal(definitions.length, 29)
+  assert.equal(definitions.length, 31)
   for (const [name, args, command] of cases) {
     const definition = definitions.find(item => item.name === name)
     assert.ok(definition, `${name} missing`)
@@ -100,10 +102,52 @@ test('tool input validation blocks unsupported or ambiguous writes locally', asy
   await assert.rejects(byName('newsclaw_chat').execute({ message: '你好' }), /(?:turnId is required|missing required property "turnId")/)
   await assert.rejects(byName('newsclaw_chat').execute({ message: '你好', turnId: 'x'.repeat(401) }), /turnId must be at most 400/)
   await assert.rejects(byName('newsclaw_list_saved').execute({ listKind: 'external' }), /must be one of/)
+  await assert.rejects(byName('newsclaw_edit_profile').execute({ target: 'likes', op: 'add', value: '宏观' }), /requestId is required|missing required property "requestId"/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['http://127.0.0.1/private'] }), /public web page/)
+  await assert.rejects(byName('newsclaw_extract_evidence').execute({ query: 'x', urls: ['http://[::1]/private'] }), /public web page/)
   await assert.rejects(byName('newsclaw_respond_interest_probe').execute({ domain: 'x', response: 'confirm', requestId: 'x'.repeat(401) }), /at most 400/)
   await assert.rejects(byName('newsclaw_add_web_monitor').execute({ url: 'https://example.com', requestId: 'x', intervalMinutes: 2 }), /between 5 and 10080/)
   await assert.rejects(byName('newsclaw_set_web_monitor_state').execute({ monitorId: 'm', action: 'delete-forever' }), /must be one of/)
   await assert.rejects(byName('newsclaw_act_on_monitor_notification').execute({ deliveryId: 'n', action: 'read' }), /requestId is required|missing required property "requestId"/)
+})
+
+test('profile edit requestId coalesces exact retries and rejects identity conflicts', async () => {
+  const definitions = []
+  const calls = []
+  const bridge = {
+    config: { apiUrl: DEFAULT_API_URL, skillPath: 'skill', timeoutMs: 5_000 },
+    async run(command, argv) { calls.push({ command, argv }); return { ok: true, argv } },
+  }
+  registerBridgeTools({ tools: { register(def) { definitions.push(def); return () => undefined } } }, bridge)
+  const edit = definitions.find(item => item.name === 'newsclaw_edit_profile')
+  const args = { target: 'likes', op: 'add', value: '宏观', requestId: 'profile-edit-1' }
+  const first = await edit.execute(args)
+  const retry = await edit.execute({ ...args })
+  assert.deepEqual(retry, first)
+  assert.equal(calls.filter(call => call.command === 'edit-profile').length, 1)
+  await assert.rejects(
+    edit.execute({ target: 'likes', op: 'remove', value: '宏观', requestId: 'profile-edit-1' }),
+    /different profile edit/,
+  )
+})
+
+test('profile edit requestId remains retryable after a failed transport', async () => {
+  const definitions = []
+  let attempts = 0
+  const bridge = {
+    config: { apiUrl: DEFAULT_API_URL, skillPath: 'skill', timeoutMs: 5_000 },
+    async run() {
+      attempts += 1
+      if (attempts === 1) throw new Error('temporary transport failure')
+      return { ok: true }
+    },
+  }
+  registerBridgeTools({ tools: { register(def) { definitions.push(def); return () => undefined } } }, bridge)
+  const edit = definitions.find(item => item.name === 'newsclaw_edit_profile')
+  const args = { target: 'likes', op: 'add', value: '宏观', requestId: 'profile-edit-retry' }
+  await assert.rejects(edit.execute(args), /temporary transport failure/)
+  assert.deepEqual(await edit.execute(args), { ok: true })
+  assert.equal(attempts, 2)
 })
 
 test('HTTP bridge redacts credentials and reports actionable timeouts', async t => {

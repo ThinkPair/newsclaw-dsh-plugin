@@ -66,6 +66,27 @@ function requestId(value: unknown): string {
   return stableKey(value, 'requestId')
 }
 
+/** Public research inputs must never cross into local or credential-bearing URLs. */
+function publicHttpUrl(value: unknown, label: string): string {
+  const text = nonEmpty(value, label)
+  let url: URL
+  try { url = new URL(text) } catch { throw new Error(`newsclaw: ${label} must be a valid public http(s) URL`) }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username !== '' || url.password !== '') {
+    throw new Error(`newsclaw: ${label} must be a public http(s) URL without credentials`)
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const privateIpv6 = host.includes(':') && (
+    host === '::1' || host.startsWith('fc') || host.startsWith('fd')
+    || host.startsWith('fe80:') || host.startsWith('::ffff:127.')
+  )
+  const blocked = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')
+    || host === '0.0.0.0' || /^127\./.test(host) || /^10\./.test(host)
+    || /^192\.168\./.test(host) || /^169\.254\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || privateIpv6
+  if (blocked) throw new Error(`newsclaw: ${label} must point to a public web page`)
+  return url.toString()
+}
+
 /** Recommendation ids are positive database identities, not arbitrary numbers. */
 function positiveInt(value: unknown, label: string): number {
   const result = typeof value === 'number' ? Math.floor(value) : NaN
@@ -81,6 +102,27 @@ function positiveInt(value: unknown, label: string): number {
  */
 export function registerBridgeTools(ctx: { tools: { register(def: unknown): () => void } }, bridge: Bridge): Array<() => void> {
   const registered: Array<() => void> = []
+  const profileEditRequests = new Map<string, { fingerprint: string; promise: ReturnType<Bridge['run']> }>()
+  const runProfileEdit = (id: string, argv: string[]): ReturnType<Bridge['run']> => {
+    const fingerprint = JSON.stringify(argv)
+    const existing = profileEditRequests.get(id)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.reject(new Error('newsclaw: requestId was already used for a different profile edit'))
+      }
+      return existing.promise
+    }
+    const promise = bridge.run('edit-profile', argv).catch(error => {
+      profileEditRequests.delete(id)
+      throw error
+    })
+    profileEditRequests.set(id, { fingerprint, promise })
+    if (profileEditRequests.size > 256) {
+      const oldest = profileEditRequests.keys().next().value
+      if (typeof oldest === 'string' && oldest !== id) profileEditRequests.delete(oldest)
+    }
+    return promise
+  }
   const register = (definition: unknown): (() => void) => {
     try {
       const dispose = ctx.tools.register(definition)
@@ -390,24 +432,26 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
 
     register(defineTool({
       name: 'newsclaw_edit_profile',
-      description: 'Apply one deterministic profile overlay edit. target is an onion field path (e.g. core.core_traits) or an interest polarity (likes/dislikes); op is set/add/remove/reset; parent targets a specific interest domain under likes/dislikes; weight pins a domain weight.',
+      description: 'Apply one deterministic profile overlay edit. REQUIRES a stable requestId; an exact retry is coalesced locally and reusing the identity for different content is rejected.',
       parameters: {
         target: str('Field path or polarity (e.g. core.core_traits, likes, dislikes).', true),
         op: str('One of: set, add, remove, reset.', true),
         value: str('Value for set/add (string form; numbers pass through).', false),
         parent: str('Specific interest domain when target is likes/dislikes.', false),
         weight: str('Optional weight (number as string) when pinning a domain.', false),
+        requestId: str('Stable idempotency key for THIS profile edit. Reuse only for an exact retry.', true),
       },
       output: TEXT_OUTPUT,
       timeoutMs: bridge.config.timeoutMs,
       execute: async (args: Record<string, unknown>) => {
         const target = nonEmpty(args.target, 'target')
         const op = oneOf(args.op, 'op', ['set', 'add', 'remove', 'reset'])
+        const stableRequestId = requestId(args.requestId)
         const argv = ['--target', target, '--op', op]
         if (typeof args.value === 'string' && args.value.trim() !== '') argv.push('--value', args.value.trim())
         if (typeof args.parent === 'string' && args.parent.trim() !== '') argv.push('--parent', args.parent.trim())
         if (typeof args.weight === 'string' && args.weight.trim() !== '') argv.push('--weight', args.weight.trim())
-        return bridge.run('edit-profile', argv)
+        return runProfileEdit(stableRequestId, argv)
       },
     })),
 
@@ -464,6 +508,57 @@ export function registerBridgeTools(ctx: { tools: { register(def: unknown): () =
         const listKind = oneOf(args.listKind, 'listKind', ['favorite', 'watch_later'])
         const limit = typeof args.limit === 'number' ? args.limit : 50
         return bridge.run('list-saved', ['--list-kind', listKind, '--limit', String(Math.max(1, Math.min(200, Math.floor(limit))))])
+      },
+    })),
+
+    register(defineTool({
+      name: 'newsclaw_search_web',
+      description: 'Search the public web for fresh, citable evidence through the NewsClaw research backend. Results are bounded and token-efficient. Send only a short, de-identified public-web query; never send private profile, notes, credentials or unpublished material.',
+      parameters: {
+        query: str('Required short public-web search query without private context.', true),
+        topic: { type: 'string', enum: ['general', 'news', 'finance'], description: 'Search category: general (default), news, or finance.' },
+        timeRange: { type: 'string', enum: ['day', 'week', 'month', 'year'], description: 'Optional freshness window.' },
+        maxResults: int('Maximum results (default 5; hard limit 8).', false),
+        refresh: bool('Bypass a reusable cached result when freshness matters.', false),
+      },
+      output: TEXT_OUTPUT,
+      timeoutMs: bridge.config.timeoutMs,
+      isConcurrencySafe: () => true,
+      execute: async (args: Record<string, unknown>) => {
+        const query = nonEmpty(args.query, 'query')
+        const topic = args.topic === undefined ? 'general' : oneOf(args.topic, 'topic', ['general', 'news', 'finance'])
+        const maxResults = typeof args.maxResults === 'number' ? args.maxResults : 5
+        const argv = ['--query', query, '--topic', topic, '--max-results', String(Math.max(1, Math.min(8, Math.floor(maxResults))))]
+        if (args.timeRange !== undefined) argv.push('--time-range', oneOf(args.timeRange, 'timeRange', ['day', 'week', 'month', 'year']))
+        if (args.refresh === true) argv.push('--refresh')
+        return bridge.run('research-search', argv)
+      },
+    })),
+
+    register(defineTool({
+      name: 'newsclaw_extract_evidence',
+      description: 'Extract bounded query-relevant evidence from one to three public pages after search. Never send private/intranet URLs, profile data, notes, credentials or unpublished material.',
+      parameters: {
+        query: str('Required short relevance question without private context.', true),
+        urls: { type: 'array', items: { type: 'string' }, required: true, description: 'One to three public HTTP(S) page URLs.' },
+        chunksPerSource: int('Relevant chunks per source (default 2; hard limit 3).', false),
+        refresh: bool('Bypass a reusable cached extraction when the page changed.', false),
+      },
+      output: TEXT_OUTPUT,
+      timeoutMs: bridge.config.timeoutMs,
+      isConcurrencySafe: () => true,
+      execute: async (args: Record<string, unknown>) => {
+        const query = nonEmpty(args.query, 'query')
+        if (!Array.isArray(args.urls) || args.urls.length === 0 || args.urls.length > 3) {
+          throw new Error('newsclaw: urls must contain between 1 and 3 public http(s) URLs')
+        }
+        const urls = args.urls.map((url, index) => publicHttpUrl(url, `urls[${index}]`))
+        const chunksPerSource = typeof args.chunksPerSource === 'number' ? args.chunksPerSource : 2
+        const argv = ['--query', query]
+        for (const url of urls) argv.push('--url', url)
+        argv.push('--chunks-per-source', String(Math.max(1, Math.min(3, Math.floor(chunksPerSource)))))
+        if (args.refresh === true) argv.push('--refresh')
+        return bridge.run('research-extract', argv)
       },
     })),
 
